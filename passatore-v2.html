@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Passatore">
+<title>Passatore 100km - Piano allenamento</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #F5F2EC; }
+  * { box-sizing: border-box; }
+  button { font-family: inherit; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { useState, useEffect, useMemo, useCallback } = React;
+
+// ============================================================
+// COSTANTI GARA E PERIODIZZAZIONE
+// ============================================================
+const RACE_DATE = new Date('2027-05-22T08:00:00');
+const START_DATE = new Date('2026-06-23T00:00:00'); // primo lunedì utile
+const TOTAL_WEEKS = 48;
+const BLOCKS = [{
+  id: 'base',
+  label: 'Base',
+  weeks: 14,
+  color: '#7A8B7F'
+}, {
+  id: 'costruzione',
+  label: 'Costruzione',
+  weeks: 20,
+  color: '#C97D4A'
+}, {
+  id: 'specifico',
+  label: 'Specifico',
+  weeks: 12,
+  color: '#A8453A'
+}, {
+  id: 'taper',
+  label: 'Taper',
+  weeks: 2,
+  color: '#3D5A6C'
+}];
+function getBlockForWeek(weekNum) {
+  let acc = 0;
+  for (const b of BLOCKS) {
+    if (weekNum <= acc + b.weeks) return {
+      ...b,
+      weekInBlock: weekNum - acc
+    };
+    acc += b.weeks;
+  }
+  return {
+    ...BLOCKS[BLOCKS.length - 1],
+    weekInBlock: BLOCKS[BLOCKS.length - 1].weeks
+  };
+}
+function weekStartDate(weekNum) {
+  const d = new Date(START_DATE);
+  d.setDate(d.getDate() + (weekNum - 1) * 7);
+  return d;
+}
+function fmtDate(d) {
+  return d.toLocaleDateString('it-IT', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short'
+  });
+}
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+function todayISO() {
+  return isoDate(new Date());
+}
+
+// ============================================================
+// GENERAZIONE SESSIONI SETTIMANALI (motore a blocchi)
+// ============================================================
+// Volume di corsa target per settimana (km), progressivo dentro ogni blocco,
+// con scarico ogni 4a settimana. Adattato dinamicamente dal "livello" corrente.
+function baseWeeklyKm(weekNum, level) {
+  const block = getBlockForWeek(weekNum);
+  const isRecovery = block.weekInBlock % 4 === 0;
+
+  // curve di base per blocco (km settimanali di corsa, non contando MT/forza).
+  // Punto di partenza alzato rispetto a un principiante: corri già 20-30km/sett
+  // comodamente sotto i 5:00/km, quindi il Base parte da un volume coerente
+  // con quello che fai ora, non da un passo indietro.
+  const ranges = {
+    base: [32, 45],
+    costruzione: [45, 62],
+    specifico: [58, 88],
+    taper: [80, 32]
+  };
+  const [from, to] = ranges[block.id];
+  const t = block.id === 'taper' ? block.weekInBlock / BLOCKS.find(b => b.id === 'taper').weeks : (block.weekInBlock - 1) / Math.max(block.weeks - 1, 1);
+  let km = from + (to - from) * t;
+  if (isRecovery && block.id !== 'taper') km *= 0.72;
+
+  // livello adattivo: scala il volume in funzione del fattore di aggiustamento
+  km = km * level;
+  return Math.round(km);
+}
+
+// genera le sessioni di corsa per la settimana in base al volume totale.
+// Schema giorni fisso, deciso per non sovrapporsi a Muay Thai (lun/mer/ven):
+// Mar e Gio = corsa in doppio con la forza (forza resta a pranzo, corsa mattina/sera)
+// Sab = lunga, Dom = back-to-back (solo Specifico, settimane piene)
+// Dalla 2a metà del Base in poi: sempre 3 sessioni (qualità + medio + lunga).
+//
+// Nel blocco Specifico la lunga del sabato cresce fino a una vera lunga da ultra
+// (50-57km nel picco), non solo una percentuale fissa del totale: nelle settimane
+// "piene" il volume infrasettimanale si riduce apposta per spostare il carico sul
+// weekend, in linea con come la maggior parte dei piani 100km strutturano il blocco
+// specifico (priorità al tempo in piedi nel weekend, non al volume medio settimanale).
+function generateRunSessions(weekNum, totalKm, level) {
+  const block = getBlockForWeek(weekNum);
+  const isRecovery = block.weekInBlock % 4 === 0 && block.id !== 'taper';
+  const t = (block.weekInBlock - 1) / Math.max(block.weeks - 1, 1);
+  const sessions = [];
+  const doppioNote = ' Stesso giorno della forza: corsa al mattino o in serata, forza resta a pranzo.';
+  if (block.id === 'taper') {
+    const longRunPct = 0.50;
+    const longRun = Math.round(totalKm * longRunPct);
+    const remaining = totalKm - longRun;
+    sessions.push({
+      day: 3,
+      type: 'medio',
+      label: 'Medio scarico',
+      km: Math.round(remaining * 0.5),
+      note: 'Ritmo facile, gambe sciolte.' + doppioNote
+    });
+    sessions.push({
+      day: 5,
+      type: 'lunga',
+      label: block.weekInBlock === 2 ? 'Ultimo allungo leggero' : 'Lunga di scarico',
+      km: longRun,
+      note: 'Tutto facile, zero ritmo gara.'
+    });
+  } else if (block.id === 'specifico') {
+    const useBackToBack = !isRecovery && block.weekInBlock >= 4;
+    let pctLong, pctB2b;
+    if (useBackToBack) {
+      pctLong = 0.55 + 0.13 * t; // 55% -> 68% del totale va nella sola lunga
+      pctB2b = 0.14 + 0.04 * t; // back-to-back cresce 14% -> 18%
+    } else {
+      pctLong = 0.55 + 0.10 * t;
+      pctB2b = 0;
+    }
+    const restPct = 1 - pctLong - pctB2b;
+    const mar = Math.round(totalKm * restPct * 0.45);
+    const gio = Math.round(totalKm * restPct * 0.55);
+    const longSab = Math.round(totalKm * pctLong);
+    const b2bDom = useBackToBack ? Math.round(totalKm * pctB2b) : 0;
+    sessions.push({
+      day: 1,
+      type: 'qualita',
+      label: isRecovery ? 'Fondo lento' : 'Salite / cambi ritmo',
+      km: mar,
+      note: (isRecovery ? 'Solo scarico, FC bassa.' : 'Lavoro su dislivello, simula i tratti tecnici del Passatore.') + doppioNote
+    });
+    sessions.push({
+      day: 3,
+      type: 'medio',
+      label: 'Fondo medio + zaino',
+      km: gio,
+      note: 'Porta lo zaino/scarpe gara, prova alimentazione e idratazione.' + doppioNote
+    });
+    sessions.push({
+      day: 5,
+      type: 'lunga',
+      label: 'Lunga specifica',
+      km: longSab,
+      note: useBackToBack ? 'Vera lunga da ultra: gestisci cibo, idratazione e ritmo come in gara.' : 'Simula notte/buio se possibile, gestisci cibo e ritmo come in gara.'
+    });
+    if (b2bDom > 0) {
+      sessions.push({
+        day: 6,
+        type: 'lunga',
+        label: 'Back-to-back (gambe stanche)',
+        km: b2bDom,
+        note: 'Corsa il giorno dopo la lunga, sulle gambe già affaticate: insieme a sabato simulano le ore finali del Passatore.'
+      });
+    }
+  } else if (block.id === 'costruzione') {
+    const longRunPct = 0.42 + 0.06 * t;
+    const longRun = Math.round(totalKm * longRunPct);
+    const remaining = totalKm - longRun;
+    sessions.push({
+      day: 1,
+      type: 'qualita',
+      label: isRecovery ? 'Fondo lento' : 'Salite o variazioni di ritmo',
+      km: Math.round(remaining * 0.40),
+      note: (isRecovery ? 'Scarico attivo.' : 'Inizia a introdurre dislivello, anche moderato.') + doppioNote
+    });
+    sessions.push({
+      day: 3,
+      type: 'medio',
+      label: 'Fondo medio',
+      km: Math.round(remaining * 0.60),
+      note: 'Ritmo controllato, costante.' + doppioNote
+    });
+    sessions.push({
+      day: 5,
+      type: 'lunga',
+      label: 'Lunga progressiva',
+      km: longRun,
+      note: 'Aumenta gradualmente, ultimi km a ritmo controllato.'
+    });
+  } else {
+    const longRunPct = 0.36 + 0.06 * t;
+    const longRun = Math.round(totalKm * longRunPct);
+    const remaining = totalKm - longRun;
+    sessions.push({
+      day: 1,
+      type: 'qualita',
+      label: isRecovery ? 'Fondo lento' : 'Fondo medio + allunghi',
+      km: Math.round(remaining * 0.35),
+      note: (isRecovery ? 'Scarico.' : "Introduce un po' di ritmo, niente di duro.") + doppioNote
+    });
+    sessions.push({
+      day: 3,
+      type: 'medio',
+      label: isRecovery ? 'Fondo lento' : 'Fondo medio',
+      km: Math.round(remaining * 0.65),
+      note: 'Zona aerobica, costante.' + doppioNote
+    });
+    sessions.push({
+      day: 5,
+      type: 'lunga',
+      label: 'Lunga base',
+      km: longRun,
+      note: 'Costanza, niente ritmo. Terreno misto se puoi.'
+    });
+  }
+  return sessions.filter(s => s.km > 0);
+}
+function generateWeekPlan(weekNum, level) {
+  const block = getBlockForWeek(weekNum);
+  const totalKm = baseWeeklyKm(weekNum, level);
+  const runs = generateRunSessions(weekNum, totalKm, level);
+  const start = weekStartDate(weekNum);
+  const sessions = [];
+  // Muay Thai fissi Lun/Mer/Ven (day 0,2,4 se 0=lunedì)
+  [0, 2, 4].forEach(d => sessions.push({
+    day: d,
+    type: 'muaythai',
+    label: 'Muay Thai',
+    fixed: true
+  }));
+  // Forza Mar/Gio
+  [1, 3].forEach(d => sessions.push({
+    day: d,
+    type: 'forza',
+    label: 'Forza funzionale (pranzo)',
+    fixed: true
+  }));
+  // Corse generate
+  runs.forEach(r => sessions.push(r));
+  sessions.sort((a, b) => a.day - b.day);
+  sessions.forEach((s, i) => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + s.day);
+    s.date = isoDate(d);
+    s.id = `w${weekNum}-d${s.day}-${s.type}`;
+  });
+  return {
+    weekNum,
+    block: block.id,
+    blockLabel: block.label,
+    weekInBlock: block.weekInBlock,
+    blockTotalWeeks: block.weeks,
+    isRecovery: block.weekInBlock % 4 === 0 && block.id !== 'taper',
+    totalKm,
+    sessions,
+    startDate: isoDate(start)
+  };
+}
+
+// ============================================================
+// MOTORE ADATTIVO: calcola il "livello" in base al completamento
+// ============================================================
+function computeAdaptiveLevel(history, currentWeekNum) {
+  // guarda le ultime 4 settimane di sessioni di CORSA pianificate (non MT/forza)
+  const lookbackWeeks = 4;
+  const fromWeek = Math.max(1, currentWeekNum - lookbackWeeks);
+  let planned = 0,
+    done = 0;
+  for (let w = fromWeek; w < currentWeekNum; w++) {
+    const plan = generateWeekPlan(w, history.levelAtWeek?.[w] ?? history.currentLevel ?? 1);
+    plan.sessions.filter(s => s.type !== 'muaythai' && s.type !== 'forza').forEach(s => {
+      planned++;
+      const status = history.log[s.id];
+      if (status === 'done') done++;
+    });
+  }
+  if (planned === 0) return {
+    level: 1,
+    rate: 1,
+    status: 'ok',
+    weeksConsidered: 0
+  };
+  const rate = done / planned;
+  let level = history.currentLevel ?? 1;
+  let status = 'ok';
+  if (rate >= 0.85) {
+    level = Math.min(1, level + 0.05); // recupera gradualmente verso 1, max 1
+    status = 'ok';
+  } else if (rate >= 0.6) {
+    level = level; // congela progressione (non scende, non sale)
+    status = 'frozen';
+  } else {
+    level = Math.max(0.55, level - 0.12); // regressione di volume
+    status = 'reduced';
+  }
+  return {
+    level,
+    rate,
+    status,
+    weeksConsidered: currentWeekNum - fromWeek
+  };
+}
+function estimateDelay(history) {
+  // stima quante settimane "in più" servirebbero, basata sul livello medio recente
+  const lvl = history.currentLevel ?? 1;
+  if (lvl >= 0.95) return 0;
+  const deficit = 1 - lvl;
+  return Math.round(deficit * 16); // euristica: deficit di livello -> settimane di ritardo equivalenti
+}
+
+// ============================================================
+// STORAGE
+// ============================================================
+const STORAGE_KEY = 'passatore-history-v1';
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {/* storage non disponibile o dato corrotto */}
+  return {
+    log: {},
+    currentLevel: 1,
+    levelAtWeek: {},
+    notes: {}
+  };
+}
+function saveHistory(history) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  } catch (e) {
+    console.error('Storage error', e);
+  }
+}
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+const TYPE_META = {
+  lunga: {
+    icon: '◐',
+    color: '#A8453A',
+    label: 'Lunga'
+  },
+  medio: {
+    icon: '◑',
+    color: '#C97D4A',
+    label: 'Medio'
+  },
+  qualita: {
+    icon: '◆',
+    color: '#7A4A8B',
+    label: 'Qualità'
+  },
+  muaythai: {
+    icon: '✦',
+    color: '#3D5A6C',
+    label: 'Muay Thai'
+  },
+  forza: {
+    icon: '▲',
+    color: '#5A6C3D',
+    label: 'Forza'
+  }
+};
+const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
+function weekNumFromDate(d) {
+  const diff = Math.floor((d - START_DATE) / (1000 * 60 * 60 * 24));
+  return Math.max(1, Math.floor(diff / 7) + 1);
+}
+
+// ============================================================
+// COMPONENTE PRINCIPALE
+// ============================================================
+function App() {
+  const [history, setHistory] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [viewWeek, setViewWeek] = useState(null);
+  const [tab, setTab] = useState('week'); // week | progress | info
+
+  useEffect(() => {
+    setHistory(loadHistory());
+    setLoading(false);
+  }, []);
+  const currentWeekNum = useMemo(() => weekNumFromDate(new Date()), []);
+  const activeWeek = viewWeek ?? currentWeekNum;
+  const adaptive = useMemo(() => {
+    if (!history) return {
+      level: 1,
+      rate: 1,
+      status: 'ok',
+      weeksConsidered: 0
+    };
+    return computeAdaptiveLevel(history, activeWeek);
+  }, [history, activeWeek]);
+  const weekPlan = useMemo(() => {
+    if (!history) return null;
+    return generateWeekPlan(activeWeek, adaptive.level);
+  }, [activeWeek, adaptive.level, history]);
+  const toggleSession = useCallback(async sessionId => {
+    setHistory(prev => {
+      const next = {
+        ...prev,
+        log: {
+          ...prev.log
+        }
+      };
+      const cur = next.log[sessionId];
+      next.log[sessionId] = cur === 'done' ? 'skipped' : cur === 'skipped' ? undefined : 'done';
+      if (next.log[sessionId] === undefined) delete next.log[sessionId];
+      next.currentLevel = adaptive.level;
+      next.levelAtWeek = {
+        ...next.levelAtWeek,
+        [activeWeek]: adaptive.level
+      };
+      saveHistory(next);
+      return next;
+    });
+  }, [adaptive.level, activeWeek]);
+  if (loading || !history || !weekPlan) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: S.loadingScreen
+    }, /*#__PURE__*/React.createElement("div", {
+      style: S.loadingText
+    }, "Carico il piano…"));
+  }
+  const daysToRace = Math.ceil((RACE_DATE - new Date()) / (1000 * 60 * 60 * 24));
+  const delay = estimateDelay(history);
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.app
+  }, /*#__PURE__*/React.createElement(Header, {
+    daysToRace: daysToRace
+  }), /*#__PURE__*/React.createElement(StatusBanner, {
+    adaptive: adaptive,
+    delay: delay
+  }), tab === 'week' && /*#__PURE__*/React.createElement(WeekView, {
+    weekPlan: weekPlan,
+    history: history,
+    onToggle: toggleSession,
+    onPrevWeek: () => setViewWeek(Math.max(1, activeWeek - 1)),
+    onNextWeek: () => setViewWeek(Math.min(TOTAL_WEEKS, activeWeek + 1)),
+    onToday: () => setViewWeek(null),
+    isCurrentWeek: activeWeek === currentWeekNum,
+    currentWeekNum: currentWeekNum
+  }), tab === 'progress' && /*#__PURE__*/React.createElement(ProgressView, {
+    history: history,
+    currentWeekNum: currentWeekNum
+  }), tab === 'info' && /*#__PURE__*/React.createElement(InfoView, null), /*#__PURE__*/React.createElement(TabBar, {
+    tab: tab,
+    setTab: setTab
+  }));
+}
+
+// ============================================================
+// HEADER
+// ============================================================
+function Header({
+  daysToRace
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.header
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.headerTop
+  }, /*#__PURE__*/React.createElement("span", {
+    style: S.headerLabel
+  }, "PASSATORE · 100 KM")), /*#__PURE__*/React.createElement("div", {
+    style: S.headerCountdown
+  }, daysToRace, /*#__PURE__*/React.createElement("span", {
+    style: S.headerCountdownUnit
+  }, " giorni")), /*#__PURE__*/React.createElement("div", {
+    style: S.headerDate
+  }, "22 maggio 2027 · 1500m D+"));
+}
+
+// ============================================================
+// STATUS BANNER (motore adattivo)
+// ============================================================
+function StatusBanner({
+  adaptive,
+  delay
+}) {
+  if (adaptive.weeksConsidered === 0) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        ...S.banner,
+        borderColor: '#7A8B7F'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: S.bannerTitle
+    }, "Piano avviato"), /*#__PURE__*/React.createElement("div", {
+      style: S.bannerText
+    }, "Nessun dato storico ancora. Il motore si attiva dopo le prime sessioni registrate."));
+  }
+  const cfg = {
+    ok: {
+      color: '#7A8B7F',
+      title: 'In linea col piano',
+      text: `Hai completato il ${Math.round(adaptive.rate * 100)}% delle corse nelle ultime ${adaptive.weeksConsidered} settimane. Progressione normale.`
+    },
+    frozen: {
+      color: '#C97D4A',
+      title: 'Progressione congelata',
+      text: `${Math.round(adaptive.rate * 100)}% di adesione nelle ultime ${adaptive.weeksConsidered} settimane. Il volume resta fermo finché non recuperi costanza.`
+    },
+    reduced: {
+      color: '#A8453A',
+      title: 'Volume ridotto automaticamente',
+      text: `Solo ${Math.round(adaptive.rate * 100)}% di adesione nelle ultime ${adaptive.weeksConsidered} settimane. Il piano ha tagliato il carico per evitare infortuni.${delay > 0 ? ` Stima: ${delay} settimane di ritardo sulla preparazione.` : ''}`
+    }
+  }[adaptive.status];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.banner,
+      borderColor: cfg.color
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.bannerTitle,
+      color: cfg.color
+    }
+  }, cfg.title), /*#__PURE__*/React.createElement("div", {
+    style: S.bannerText
+  }, cfg.text));
+}
+
+// ============================================================
+// WEEK VIEW
+// ============================================================
+function WeekView({
+  weekPlan,
+  history,
+  onToggle,
+  onPrevWeek,
+  onNextWeek,
+  onToday,
+  isCurrentWeek,
+  currentWeekNum
+}) {
+  const block = BLOCKS.find(b => b.id === weekPlan.block);
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.content
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.weekNav
+  }, /*#__PURE__*/React.createElement("button", {
+    style: S.navBtn,
+    onClick: onPrevWeek
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
+    style: S.weekNavCenter
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.weekNavTitle
+  }, "Settimana ", weekPlan.weekNum, " / ", TOTAL_WEEKS), !isCurrentWeek && /*#__PURE__*/React.createElement("button", {
+    style: S.todayBtn,
+    onClick: onToday
+  }, "torna a oggi")), /*#__PURE__*/React.createElement("button", {
+    style: S.navBtn,
+    onClick: onNextWeek
+  }, "›")), /*#__PURE__*/React.createElement("div", {
+    style: S.blockCard
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.blockDot,
+      background: block.color
+    }
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: S.blockLabel
+  }, weekPlan.blockLabel, " · settimana ", weekPlan.weekInBlock, "/", weekPlan.blockTotalWeeks), /*#__PURE__*/React.createElement("div", {
+    style: S.blockSub
+  }, weekPlan.totalKm, " km di corsa pianificati", weekPlan.isRecovery && /*#__PURE__*/React.createElement("span", {
+    style: S.recoveryTag
+  }, " · scarico")))), /*#__PURE__*/React.createElement("div", {
+    style: S.sessionList
+  }, weekPlan.sessions.map(s => /*#__PURE__*/React.createElement(SessionRow, {
+    key: s.id,
+    session: s,
+    status: history.log[s.id],
+    onToggle: () => onToggle(s.id)
+  }))));
+}
+function SessionRow({
+  session,
+  status,
+  onToggle
+}) {
+  const meta = TYPE_META[session.type];
+  const d = new Date(session.date);
+  const isPast = d < new Date(new Date().setHours(0, 0, 0, 0));
+  const isFixed = session.fixed;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.sessionRow,
+      opacity: status === 'skipped' ? 0.55 : 1
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    style: {
+      ...S.checkbox,
+      borderColor: meta.color,
+      background: status === 'done' ? meta.color : 'transparent'
+    },
+    onClick: onToggle,
+    "aria-label": status === 'done' ? 'Segna come non fatto' : 'Segna come fatto'
+  }, status === 'done' ? '✓' : status === 'skipped' ? '✕' : ''), /*#__PURE__*/React.createElement("div", {
+    style: S.sessionBody
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.sessionTopRow
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      ...S.sessionIcon,
+      color: meta.color
+    }
+  }, meta.icon), /*#__PURE__*/React.createElement("span", {
+    style: S.sessionLabel
+  }, session.label), session.km ? /*#__PURE__*/React.createElement("span", {
+    style: S.sessionKm
+  }, session.km, " km") : null), /*#__PURE__*/React.createElement("div", {
+    style: S.sessionMeta
+  }, DAY_NAMES[session.day], " · ", fmtDate(d), isPast && !status && !isFixed ? /*#__PURE__*/React.createElement("span", {
+    style: S.missedTag
+  }, " · da registrare") : null), session.note && /*#__PURE__*/React.createElement("div", {
+    style: S.sessionNote
+  }, session.note)));
+}
+
+// ============================================================
+// PROGRESS VIEW
+// ============================================================
+function ProgressView({
+  history,
+  currentWeekNum
+}) {
+  const weeksData = useMemo(() => {
+    const arr = [];
+    for (let w = Math.max(1, currentWeekNum - 7); w <= currentWeekNum; w++) {
+      const lvl = history.levelAtWeek?.[w] ?? 1;
+      const plan = generateWeekPlan(w, lvl);
+      const runs = plan.sessions.filter(s => s.type !== 'muaythai' && s.type !== 'forza');
+      const done = runs.filter(s => history.log[s.id] === 'done').length;
+      arr.push({
+        week: w,
+        total: runs.length,
+        done,
+        block: plan.blockLabel
+      });
+    }
+    return arr;
+  }, [history, currentWeekNum]);
+  const totalDone = Object.values(history.log).filter(v => v === 'done').length;
+  const totalSkipped = Object.values(history.log).filter(v => v === 'skipped').length;
+  const adherence = totalDone + totalSkipped > 0 ? Math.round(totalDone / (totalDone + totalSkipped) * 100) : 0;
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.content
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.statsGrid
+  }, /*#__PURE__*/React.createElement(StatCard, {
+    label: "Sessioni completate",
+    value: totalDone
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Sessioni saltate",
+    value: totalSkipped
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Adesione totale",
+    value: `${adherence}%`
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Livello attuale",
+    value: `${Math.round((history.currentLevel ?? 1) * 100)}%`
+  })), /*#__PURE__*/React.createElement("div", {
+    style: S.sectionTitle
+  }, "Ultime settimane"), /*#__PURE__*/React.createElement("div", {
+    style: S.weekBars
+  }, weeksData.map(w => /*#__PURE__*/React.createElement("div", {
+    key: w.week,
+    style: S.weekBarRow
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.weekBarLabel
+  }, "S", w.week), /*#__PURE__*/React.createElement("div", {
+    style: S.weekBarTrack
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.weekBarFill,
+      width: w.total > 0 ? `${w.done / w.total * 100}%` : '0%',
+      background: w.done === w.total ? '#7A8B7F' : w.done === 0 ? '#A8453A' : '#C97D4A'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: S.weekBarCount
+  }, w.done, "/", w.total)))), /*#__PURE__*/React.createElement("div", {
+    style: S.blockProgress
+  }, BLOCKS.map(b => {
+    let startW = 1;
+    for (const bb of BLOCKS) {
+      if (bb.id === b.id) break;
+      startW += bb.weeks;
+    }
+    const isCurrent = currentWeekNum >= startW && currentWeekNum < startW + b.weeks;
+    const isPast = currentWeekNum >= startW + b.weeks;
+    return /*#__PURE__*/React.createElement("div", {
+      key: b.id,
+      style: S.blockProgressItem
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        ...S.blockProgressDot,
+        background: isPast ? b.color : isCurrent ? b.color : 'transparent',
+        borderColor: b.color
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      style: S.blockProgressLabel
+    }, b.label), /*#__PURE__*/React.createElement("div", {
+      style: S.blockProgressWeeks
+    }, b.weeks, " sett."));
+  })));
+}
+function StatCard({
+  label,
+  value
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.statCard
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.statValue
+  }, value), /*#__PURE__*/React.createElement("div", {
+    style: S.statLabel
+  }, label));
+}
+
+// ============================================================
+// INFO VIEW
+// ============================================================
+function InfoView() {
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.content
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Come funziona il motore adattivo"), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "Ogni settimana il piano genera le sessioni di corsa in base al blocco attuale (Base, Costruzione, Specifico, Taper) e a un \"livello\" di carico compreso tra 55% e 100%."), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "Il livello si ricalcola guardando l'adesione delle ultime 4 settimane di corsa (escluso Muay Thai e forza, che restano fissi):"), /*#__PURE__*/React.createElement("ul", {
+    style: S.infoList
+  }, /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("strong", null, "≥ 85% completato"), " → il volume sale normalmente."), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("strong", null, "60–85%"), " → il volume resta congelato, niente salita finché non recuperi costanza."), /*#__PURE__*/React.createElement("li", null, /*#__PURE__*/React.createElement("strong", null, "< 60%"), " → il volume scende automaticamente per evitare infortuni, e viene stimato un ritardo equivalente in settimane.")), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "[Inferenza] Le curve di volume e le percentuali di distribuzione lunga/media/qualità sono basate su pratiche comuni di periodizzazione per ultratrail, non su un piano fornito da un coach certificato. Usa il buon senso e adattalo alle tue sensazioni, soprattutto su dislivello e recupero da Muay Thai/forza."), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "[Non verificato, da ricerca web] Diverse fonti su preparazione a 100km (CTS Ultrarunning, Marathon Handbook, The Running Channel) indicano una lunga di picco tra 50 e 60km, spesso spezzata in back-to-back nel weekend per arrivare a 50-60km totali senza fare un singolo sforzo isolato troppo lungo. Il picco di questo piano (lunga ~57km + back-to-back ~15km) è coerente con questo range, nella parte alta. Una fonte (coach CTS Jason Koop) segnala anche che non esiste una distanza \"magica\": atleti hanno completato 100 miglia con lunghe pari solo al 20% della distanza di gara, puntando tutto su costanza e volume totale. Nessuna di queste fonti sostituisce un coach che veda il tuo storico reale.")), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Struttura del piano"), BLOCKS.map(b => /*#__PURE__*/React.createElement("div", {
+    key: b.id,
+    style: S.infoBlockRow
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoBlockDot,
+      background: b.color
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlockText
+  }, b.label, " — ", b.weeks, " settimane")))), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Schema settimanale"), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "Lun/Mer/Ven sono occupati da Muay Thai, Mar/Gio da forza a pranzo: non resta nessun giorno libero lun–ven. Le sessioni di corsa infrasettimanali (qualità il martedì, medio il giovedì) sono quindi un doppio con la forza — corsa al mattino presto o in serata, forza resta a pranzo."), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "Il sabato è la lunga. Nel blocco Specifico, nelle settimane non di scarico, la domenica si aggiunge un back-to-back: una corsa più breve fatta sulle gambe già stanche dal giorno prima. È la tecnica che alimenta davvero la resistenza da 100km, perché simula la fatica accumulata che incontri nelle ultime ore del Passatore.")), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Vincoli fissi"), /*#__PURE__*/React.createElement("p", {
+    style: S.infoText
+  }, "Muay Thai lun/mer/ven e forza funzionale mar/gio restano sempre programmati, indipendentemente dal volume di corsa.")));
+}
+
+// ============================================================
+// TAB BAR
+// ============================================================
+function TabBar({
+  tab,
+  setTab
+}) {
+  const tabs = [{
+    id: 'week',
+    label: 'Settimana',
+    icon: '◐'
+  }, {
+    id: 'progress',
+    label: 'Progressi',
+    icon: '▲'
+  }, {
+    id: 'info',
+    label: 'Info',
+    icon: '✦'
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.tabBar
+  }, tabs.map(t => /*#__PURE__*/React.createElement("button", {
+    key: t.id,
+    style: {
+      ...S.tabBtn,
+      color: tab === t.id ? '#1A1A1A' : '#9A9690'
+    },
+    onClick: () => setTab(t.id)
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.tabIcon
+  }, t.icon), /*#__PURE__*/React.createElement("div", {
+    style: S.tabLabel
+  }, t.label))));
+}
+
+// ============================================================
+// STYLES
+// ============================================================
+const S = {
+  app: {
+    minHeight: '100vh',
+    background: '#F5F2EC',
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    color: '#1A1A1A',
+    paddingBottom: 76,
+    maxWidth: 480,
+    margin: '0 auto',
+    boxShadow: '0 0 40px rgba(0,0,0,0.04)'
+  },
+  loadingScreen: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#F5F2EC',
+    fontFamily: "'Inter', sans-serif"
+  },
+  loadingText: {
+    color: '#9A9690',
+    fontSize: 14
+  },
+  header: {
+    background: '#1A1A1A',
+    color: '#F5F2EC',
+    padding: '28px 20px 22px'
+  },
+  headerTop: {
+    marginBottom: 10
+  },
+  headerLabel: {
+    fontSize: 11,
+    letterSpacing: '0.12em',
+    color: '#C97D4A',
+    fontWeight: 700
+  },
+  headerCountdown: {
+    fontSize: 52,
+    fontWeight: 800,
+    lineHeight: 1,
+    fontFamily: "'Georgia', serif",
+    letterSpacing: '-0.02em'
+  },
+  headerCountdownUnit: {
+    fontSize: 18,
+    fontWeight: 500,
+    color: '#C5C0B8',
+    marginLeft: 6
+  },
+  headerDate: {
+    fontSize: 13,
+    color: '#A8A39A',
+    marginTop: 6
+  },
+  banner: {
+    margin: '14px 16px 0',
+    padding: '12px 14px',
+    background: '#FFFFFF',
+    borderLeft: '3px solid',
+    borderRadius: 6
+  },
+  bannerTitle: {
+    fontSize: 13,
+    fontWeight: 700,
+    marginBottom: 3
+  },
+  bannerText: {
+    fontSize: 12.5,
+    color: '#5A564E',
+    lineHeight: 1.4
+  },
+  content: {
+    padding: '16px 16px 8px'
+  },
+  weekNav: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14
+  },
+  navBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: '50%',
+    border: 'none',
+    background: '#FFFFFF',
+    fontSize: 18,
+    color: '#1A1A1A',
+    cursor: 'pointer'
+  },
+  weekNavCenter: {
+    textAlign: 'center'
+  },
+  weekNavTitle: {
+    fontSize: 14,
+    fontWeight: 700
+  },
+  todayBtn: {
+    border: 'none',
+    background: 'none',
+    color: '#C97D4A',
+    fontSize: 11,
+    marginTop: 2,
+    cursor: 'pointer',
+    textDecoration: 'underline'
+  },
+  blockCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    background: '#FFFFFF',
+    padding: '14px 16px',
+    borderRadius: 10,
+    marginBottom: 16
+  },
+  blockDot: {
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
+    flexShrink: 0
+  },
+  blockLabel: {
+    fontSize: 14,
+    fontWeight: 700
+  },
+  blockSub: {
+    fontSize: 12.5,
+    color: '#7A766E',
+    marginTop: 2
+  },
+  recoveryTag: {
+    color: '#C97D4A',
+    fontWeight: 600
+  },
+  sessionList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8
+  },
+  sessionRow: {
+    display: 'flex',
+    gap: 12,
+    background: '#FFFFFF',
+    borderRadius: 10,
+    padding: '12px 14px',
+    alignItems: 'flex-start'
+  },
+  checkbox: {
+    width: 26,
+    height: 26,
+    borderRadius: '50%',
+    border: '2px solid',
+    flexShrink: 0,
+    marginTop: 2,
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'transparent'
+  },
+  sessionBody: {
+    flex: 1,
+    minWidth: 0
+  },
+  sessionTopRow: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: 6,
+    flexWrap: 'wrap'
+  },
+  sessionIcon: {
+    fontSize: 13
+  },
+  sessionLabel: {
+    fontSize: 14.5,
+    fontWeight: 700
+  },
+  sessionKm: {
+    fontSize: 12.5,
+    color: '#7A766E',
+    marginLeft: 'auto'
+  },
+  sessionMeta: {
+    fontSize: 12,
+    color: '#9A9690',
+    marginTop: 3
+  },
+  sessionNote: {
+    fontSize: 12,
+    color: '#5A564E',
+    marginTop: 5,
+    lineHeight: 1.4
+  },
+  missedTag: {
+    color: '#A8453A',
+    fontWeight: 600
+  },
+  statsGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 10,
+    marginBottom: 22
+  },
+  statCard: {
+    background: '#FFFFFF',
+    borderRadius: 10,
+    padding: '14px 16px'
+  },
+  statValue: {
+    fontSize: 26,
+    fontWeight: 800,
+    fontFamily: "'Georgia', serif"
+  },
+  statLabel: {
+    fontSize: 11.5,
+    color: '#9A9690',
+    marginTop: 3
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: '#7A766E',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    marginBottom: 10
+  },
+  weekBars: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 7,
+    marginBottom: 24
+  },
+  weekBarRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10
+  },
+  weekBarLabel: {
+    fontSize: 11.5,
+    color: '#7A766E',
+    width: 28
+  },
+  weekBarTrack: {
+    flex: 1,
+    height: 8,
+    background: '#E8E4DC',
+    borderRadius: 4,
+    overflow: 'hidden'
+  },
+  weekBarFill: {
+    height: '100%',
+    borderRadius: 4
+  },
+  weekBarCount: {
+    fontSize: 11.5,
+    color: '#7A766E',
+    width: 32,
+    textAlign: 'right'
+  },
+  blockProgress: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    background: '#FFFFFF',
+    borderRadius: 10,
+    padding: '16px 12px'
+  },
+  blockProgressItem: {
+    textAlign: 'center',
+    flex: 1
+  },
+  blockProgressDot: {
+    width: 14,
+    height: 14,
+    borderRadius: '50%',
+    border: '2px solid',
+    margin: '0 auto 6px'
+  },
+  blockProgressLabel: {
+    fontSize: 11,
+    fontWeight: 700
+  },
+  blockProgressWeeks: {
+    fontSize: 10,
+    color: '#9A9690',
+    marginTop: 1
+  },
+  infoBlock: {
+    background: '#FFFFFF',
+    borderRadius: 10,
+    padding: '16px 18px',
+    marginBottom: 12
+  },
+  infoTitle: {
+    fontSize: 14.5,
+    fontWeight: 700,
+    marginBottom: 8
+  },
+  infoText: {
+    fontSize: 13,
+    color: '#5A564E',
+    lineHeight: 1.55,
+    marginBottom: 8
+  },
+  infoList: {
+    fontSize: 13,
+    color: '#5A564E',
+    lineHeight: 1.6,
+    paddingLeft: 18,
+    marginBottom: 8
+  },
+  infoBlockRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6
+  },
+  infoBlockDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%'
+  },
+  infoBlockText: {
+    fontSize: 13,
+    color: '#5A564E'
+  },
+  tabBar: {
+    position: 'fixed',
+    bottom: 0,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: '100%',
+    maxWidth: 480,
+    background: '#FFFFFF',
+    borderTop: '1px solid #E8E4DC',
+    display: 'flex',
+    paddingBottom: 'env(safe-area-inset-bottom, 8px)'
+  },
+  tabBtn: {
+    flex: 1,
+    border: 'none',
+    background: 'none',
+    padding: '10px 0 6px',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 3
+  },
+  tabIcon: {
+    fontSize: 16
+  },
+  tabLabel: {
+    fontSize: 10.5,
+    fontWeight: 600
+  }
+};
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+</script>
+</body>
+</html>
