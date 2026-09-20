@@ -223,12 +223,35 @@ function generateRunSessions(weekNum, totalKm) {
       const z4km = longKm >= 30 ? 10 : longKm >= 25 ? 6 : 0;
       const z2km = longKm - z4km;
       const nRip = ph.weekInBlock <= 6 ? 5 : ph.weekInBlock <= 10 ? 6 : 7;
+
+      // Rotazione qualità martedì (le settimane %4==0 sono scarico, gestite sopra):
+      // wib 1,5,9,13 → ripetute | wib 2,10 → progressivo | wib 6,14 → salite | wib 3,7,11 → fartlek
+      const mod4 = ph.weekInBlock % 4;
+      const qualityType = mod4 === 1 ? 'ripetute' : mod4 === 3 ? 'fartlek' : ph.weekInBlock === 6 || ph.weekInBlock === 14 ? 'salite' : 'progressivo';
+      const qualityConfig = {
+        ripetute: {
+          label: `Ripetute ${nRip}×1km`,
+          note: `${FC_LABELS.Z5a} nelle ripetute, Z2 nel recupero. Schema: 2km riscaldamento Z2 → ${nRip}×1km a 170-175 bpm (~3:50-4:00/km) con 90s recupero camminando → 2km defaticamento Z2. Non partire forte nelle prime ripetute.${doppio}`
+        },
+        progressivo: {
+          label: 'Progressivo',
+          note: `${FC_LABELS.Z2} i primi 2/3, ${FC_LABELS.Z4} l'ultimo terzo. Parti a 5:20/km (≤145 bpm), chiudi gli ultimi 3km a 4:16/km (165-170 bpm).${doppio}`
+        },
+        fartlek: {
+          label: 'Fartlek 6×3 min',
+          note: `Schema: 2km riscaldamento Z2 → 6×3 min a ${FC_LABELS.Z4} (160-170 bpm, ~4:05-4:15/km) con 2 min Z2 di recupero corso → 2km defaticamento. Allena i cambi di ritmo: utile in maratona per i rilanci e nell'ultra per il terreno variabile.${doppio}`
+        },
+        salite: {
+          label: 'Salite 8×45"',
+          note: `Schema: 2km riscaldamento Z2 → 8×45 secondi in salita ripida (5-8% pendenza) a sforzo quasi massimo, recupero camminando in discesa → 2km defaticamento Z2. Non guardare il passo, guarda lo sforzo. [Inferenza] Costruisce forza specifica ed economia di corsa senza il carico articolare delle ripetute in piano — rilevante per i 1500m D+ del Passatore.${doppio}`
+        }
+      }[qualityType];
       sessions.push({
         day: 1,
         type: 'qualita',
-        label: isQuality ? `Ripetute ${nRip}×1km` : 'Progressivo',
+        label: qualityConfig.label,
         km: marKm,
-        note: isQuality ? `${FC_LABELS.Z5a} nelle ripetute, Z2 nel recupero. Schema: 2km riscaldamento Z2 → ${nRip}×1km a 170-175 bpm (~3:50-4:00/km) con 90s recupero camminando → 2km defaticamento Z2. Non partire forte nelle prime ripetute.${doppio}` : `${FC_LABELS.Z2} i primi 2/3, ${FC_LABELS.Z4} l'ultimo terzo. Parti a 5:20/km (≤145 bpm), chiudi gli ultimi 3km a 4:16/km (165-170 bpm).${doppio}`
+        note: qualityConfig.note
       });
       sessions.push({
         day: 3,
@@ -243,6 +266,13 @@ function generateRunSessions(weekNum, totalKm) {
         label: z4km > 0 ? `Lunga con finale Z4 (${z2km}+${z4km}km)` : 'Lunga Z2',
         km: longKm,
         note: z4km > 0 ? noteLunga(z2km, z4km) : `${FC_LABELS.Z2} — max 151 bpm per tutta la durata.`
+      });
+      sessions.push({
+        day: 6,
+        type: 'rigenerativa',
+        label: 'Rigenerativa 35 min + allunghi',
+        km: 6,
+        note: `🔵 Z1-Z2 basso — MAX 140 bpm per 30 minuti, passo ~5:40-6:00/km. Poi 6×20 secondi in salita breve a sforzo brillante (non massimale), recupero camminando. [Inferenza] Gli allunghi in salita mantengono reattività neuromuscolare durante i blocchi di alto volume, a costo metabolico quasi nullo. Se le gambe sono dure dalla lunga, salta gli allunghi e fai solo i 30 min lenti.`
       });
     }
     return sessions;
@@ -272,6 +302,13 @@ function generateRunSessions(weekNum, totalKm) {
       km: longKm,
       note: `${FC_LABELS.Z2} — prima lunga con logica ultra. Porta zaino, prova alimentazione, terreno misto. Max 151 bpm.`
     });
+    sessions.push({
+      day: 6,
+      type: 'rigenerativa',
+      label: 'Rigenerativa 35 min',
+      km: 6,
+      note: `🔵 Z1-Z2 basso — MAX 140 bpm. 35 min lentissimi. Recupero attivo dalla lunga di ieri.`
+    });
     return sessions;
   }
   if (ph.id === 'specifico') {
@@ -285,9 +322,9 @@ function generateRunSessions(weekNum, totalKm) {
     sessions.push({
       day: 1,
       type: 'qualita',
-      label: isRec ? 'Fondo lento' : 'Salite / cambi ritmo trail',
+      label: isRec ? 'Fondo lento' : ph.weekInBlock % 2 === 1 ? 'Salite lunghe 5×3 min' : 'Fartlek trail 8×2 min',
       km: marKm,
-      note: isRec ? noteZ2puro(' Scarico.') : `${FC_LABELS.Z4} sulle salite (fino a 170 bpm), ${FC_LABELS.Z2} in piano. Porta scarpe trail. Simula i tratti del Passatore.${doppio}`
+      note: isRec ? noteZ2puro(' Scarico.') : ph.weekInBlock % 2 === 1 ? `Schema: 2km riscaldamento Z2 → 5×3 min in salita costante a ${FC_LABELS.Z4} (160-170 bpm), recupero in discesa lento → defaticamento. Cerca una salita di 600-800m. [Inferenza] Simula i tratti lunghi in salita del Passatore: l'obiettivo è imparare a salire senza andare oltre soglia.${doppio}` : `Schema: 2km riscaldamento Z2 → 8×2 min a ritmo brillante su terreno misto (saliscendi), recupero 2 min Z2 → defaticamento. Porta scarpe trail. Allena i cambi di ritmo su terreno irregolare.${doppio}`
     });
     sessions.push({
       day: 3,
@@ -348,13 +385,16 @@ function generateWeekPlan(weekNum, level) {
   const start = weekStartDate(weekNum);
   const isRec = ph.weekInBlock % 4 === 0 && !['taper', 'gara'].includes(ph.id);
   const skipMT = weekNum === 1 || ph.id === 'gara';
+  // MT ridotto a 2x (lun+mer, salta venerdì) nelle ultime 4 settimane pre-maratona
+  const mtRidotto = ph.id === 'maratona' && ph.weekInBlock >= 14;
   const sessions = [];
   if (!skipMT) {
-    [0, 2, 4].forEach(d => sessions.push({
+    const mtDays = mtRidotto ? [0, 2] : [0, 2, 4];
+    mtDays.forEach(d => sessions.push({
       day: d,
       type: 'muaythai',
       label: 'Muay Thai',
-      note: 'Ore 21:00',
+      note: mtRidotto ? 'Ore 21:00 · taper pre-maratona (venerdì saltato)' : 'Ore 21:00',
       fixed: true
     }));
     [1, 3].forEach(d => sessions.push({
@@ -458,6 +498,10 @@ const TYPE_META = {
   qualita: {
     icon: '◆',
     color: '#7A4A8B'
+  },
+  rigenerativa: {
+    icon: '○',
+    color: '#5A9A9A'
   },
   muaythai: {
     icon: '✦',
@@ -911,13 +955,25 @@ function InfoView() {
     style: S.infoTitle
   }, "Sessioni settimanali"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " qualità — ripetute Z5a (sett. dispari) o progressivo Z4 (sett. pari)."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Mar — qualità a rotazione:"), " ripetute 1km (Z5a) → progressivo (Z4) → fartlek 6×3min (Z4) → salite 8×45\" (forza specifica). Ogni 4 settimane il ciclo si ripete, così nessuno stimolo si satura."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
   }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " Z2 puro — max 151 bpm, nessuna eccezione."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
   }, /*#__PURE__*/React.createElement("strong", null, "Sab:"), " lunga — Z2 con finale Z4 nelle settimane di costruzione."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " back-to-back Z2 (blocco Specifico, settimane piene).")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " rigenerativa 35 min (max 140 bpm) + 6×20\" allunghi in salita · nel blocco Specifico: back-to-back Z2.")), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Blocco Specifico — qualità"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, "Martedì alterna ", /*#__PURE__*/React.createElement("strong", null, "salite lunghe 5×3 min"), " (settimane dispari, Z4 costante su salita 600-800m) e ", /*#__PURE__*/React.createElement("strong", null, "fartlek trail 8×2 min"), " (settimane pari, terreno misto). Costruisce la capacità di salire senza sforare soglia, che è quello che serve sui 1500m D+ del Passatore.")), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Muay Thai e forza"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, "MT lun/mer/ven ore 21 per tutto il piano, ", /*#__PURE__*/React.createElement("strong", null, "ridotto a 2x (lun+mer) nelle ultime 4 settimane pre-maratona"), " — dal 23 novembre. Forza funzionale mar/gio in pausa pranzo, programma gestito dal preparatore.")));
 }
 function TabBar({
   tab,
