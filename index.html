@@ -16,15 +16,15 @@
 <div id="root"></div>
 <script>
 const { useState, useEffect, useMemo, useCallback } = React;
-// ============================================================
-// COSTANTI
-// ============================================================
-const MARATHON_DATE = new Date('2026-12-20T08:30:00'); // domenica 20 dic 2026
-const RACE_DATE = new Date('2027-05-22T15:00:00'); // sabato 22 mag 2027
-
-// Piano a fasi — lunedì 24 agosto 2026
-// Tutte le date usano T12:00:00 per evitare il bug timezone UTC+2
+const MARATHON_DATE = new Date('2026-12-20T08:30:00');
+const RACE_DATE = new Date('2027-05-22T15:00:00');
 const PLAN_START = new Date('2026-08-24T12:00:00');
+const FC_LABELS = {
+  Z2: '🟢 Z2 (138-151 bpm)',
+  Z3: '🟡 Z3 (151-160 bpm)',
+  Z4: '🔴 Z4 (160-170 bpm)',
+  Z5a: '🔴 Z5a (170-175 bpm)'
+};
 const PHASES = [{
   id: 'maratona',
   label: 'Maratona',
@@ -56,19 +56,9 @@ const PHASES = [{
   color: '#1A1A1A',
   goal: '100km del Passatore — 22 mag 2027'
 }];
-const TOTAL_WEEKS = PHASES.reduce((s, p) => s + p.weeks, 0); // 39
-
-// ============================================================
-// FUNZIONI DATE (immune al bug timezone)
-// ============================================================
+const TOTAL_WEEKS = PHASES.reduce((s, p) => s + p.weeks, 0);
 function weekStartDate(weekNum) {
   return new Date(PLAN_START.getTime() + (weekNum - 1) * 7 * 86400000);
-}
-function isoDate(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
 }
 function fmtDate(d) {
   return d.toLocaleDateString('it-IT', {
@@ -78,14 +68,14 @@ function fmtDate(d) {
   });
 }
 function weekNumFromDate(d) {
-  const diffMs = d.getTime() - PLAN_START.getTime();
-  const diffDays = Math.floor(diffMs / 86400000);
-  return Math.max(1, Math.floor(diffDays / 7) + 1);
+  return Math.max(1, Math.floor((d.getTime() - PLAN_START.getTime()) / (7 * 86400000)) + 1);
 }
-
-// ============================================================
-// STRUTTURA PIANO
-// ============================================================
+function isoDate(d) {
+  const y = d.getFullYear(),
+    m = String(d.getMonth() + 1).padStart(2, '0'),
+    dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
 function getPhaseForWeek(weekNum) {
   let acc = 0;
   for (const p of PHASES) {
@@ -106,176 +96,157 @@ function baseWeeklyKm(weekNum, level) {
   const isRec = ph.weekInBlock % 4 === 0 && !['taper', 'gara'].includes(ph.id);
   const ranges = {
     maratona: [45, 60],
-    // sub 3h richiede volume più alto
     transizione: [30, 45],
     specifico: [52, 82],
     taper: [70, 22],
     gara: [15, 15]
   };
-  const [from, to] = ranges[ph.id] ?? [40, 40];
   if (ph.id === 'gara') return 15;
+  const [from, to] = ranges[ph.id];
   let km = from + (to - from) * t;
   if (isRec) km *= 0.72;
   return Math.round(km * level);
 }
-
-// ============================================================
-// GENERAZIONE SESSIONI
-// ============================================================
-// Schema giorni fisso:
-// Lun/Mer/Ven (0,2,4) = Muay Thai ore 21
-// Mar/Gio (1,3) = Forza pranzo + corsa (mattina o sera)
-// Sab (5) = lunga
-// Dom (6) = back-to-back (solo Specifico, settimane piene)
 function generateRunSessions(weekNum, totalKm) {
   const ph = getPhaseForWeek(weekNum);
   const t = (ph.weekInBlock - 1) / Math.max(ph.weeks - 1, 1);
   const isRec = ph.weekInBlock % 4 === 0 && !['taper', 'gara'].includes(ph.id);
-  const doppio = ' → corsa mattina presto (prima del lavoro) o in serata; forza resta a pranzo.';
+  const doppio = ' Stesso giorno della forza: corsa mattina presto o in serata.';
+  const noteZ2puro = (extra = '') => `${FC_LABELS.Z2} — MAX 151 bpm per tutta la durata. Sembra lento: è giusto così. Costruisce il motore aerobico.${extra}${doppio}`;
+  const noteLunga = (z2km, z4km) => `Primi ${z2km}km: ${FC_LABELS.Z2} (< 151 bpm). Ultimi ${z4km}km: ${FC_LABELS.Z4} (160-170 bpm, passo gara 4:14-4:16/km). Se a ${z2km}km sei già sopra 155 bpm hai corso troppo forte.`;
   const sessions = [];
-
-  // ---- GARA ----
   if (ph.id === 'gara') {
     sessions.push({
       day: 3,
       type: 'medio',
       label: 'Scioglimento gambe',
       km: 8,
-      note: 'Corsa leggerissima, solo per sciogliere. Niente sforzo.' + doppio
+      note: `${FC_LABELS.Z2} — 8km facilissimi, max 145 bpm.${doppio}`
     });
     sessions.push({
       day: 5,
       type: 'lunga',
       label: '🏁 100KM DEL PASSATORE',
       km: 100,
-      note: 'Partenza sabato 22 maggio ore 15:00 da Firenze, Piazza del Duomo. Arrivo Faenza.'
+      note: 'Partenza sabato 22 maggio ore 15:00, Piazza del Duomo, Firenze.'
     });
     return sessions;
   }
-
-  // ---- MARATONA (17 settimane, target sub 3h = passo 4:16/km) ----
   if (ph.id === 'maratona') {
-    const isTaper = ph.weekInBlock >= 14; // ultime 4 sett = taper
+    const isTaper = ph.weekInBlock >= 14;
     const isRec4 = ph.weekInBlock % 4 === 0;
-
-    // Settimana 17 = settimana gara (20 dic domenica)
     if (ph.weekInBlock === 17) {
       sessions.push({
         day: 1,
         type: 'qualita',
         label: 'Scioglimento 50 min',
         km: 9,
-        note: 'Corri 50 minuti facile. Ultimi 5 min a passo gara (4:16/km) solo per sentire le gambe.' + doppio
+        note: `${FC_LABELS.Z2} — 50 min facili. Ultimi 5 min a Z4 solo per sentire le gambe.${doppio}`
       });
       sessions.push({
         day: 3,
         type: 'medio',
         label: 'Scioglimento 40 min',
         km: 7,
-        note: 'Corri 40 minuti lento. Gambe sciolte, niente qualità.' + doppio
+        note: `${FC_LABELS.Z2} — 40 min lento. Max 145 bpm.${doppio}`
       });
       sessions.push({
         day: 5,
         type: 'lunga',
         label: 'Scioglimento 30 min',
         km: 5,
-        note: 'Corri 30 minuti lentissimo. Sabato riposo totale, domenica 20 dic = 🏁 Maratona.'
+        note: `${FC_LABELS.Z2} — 30 min lentissimo. Sabato riposo. Dom 20 dic: 🏁 Maratona.`
       });
       sessions.push({
         day: 6,
         type: 'lunga',
         label: '🏁 MARATONA DI FIRENZE',
         km: 42,
-        note: 'Gara. Domenica 20 dicembre. Target sub 3h = passo 4:16/km.'
+        note: 'Domenica 20 dicembre. Target sub 3h = 4:16/km. FC attesa: Z4 (160-170 bpm) per la maggior parte della gara.'
       });
       return sessions;
     }
-
-    // Progressione lunga del sabato (settimane 1-16):
-    // S1:22 S2:25 S3:27 S4:18(sc) S5:28 S6:30 S7:32 S8:20(sc) S9:33 S10:35 S11:34 S12:22(sc)
-    // S13:18(tap) S14:14(tap) S15:10(tap) S16:sciol
-    const longKmPlan = [0, 22, 25, 27, 18, 28, 30, 32, 20, 33, 35, 34, 22, 18, 14, 10, 0];
-    const longKm = longKmPlan[ph.weekInBlock] ?? 20;
-
-    // Settimana 16 = scioglimento pre-settimana gara
     if (ph.weekInBlock === 16) {
       sessions.push({
         day: 1,
         type: 'qualita',
         label: 'Fondo lento',
         km: 6,
-        note: 'Taper finale. Tutto lento.' + doppio
+        note: noteZ2puro()
       });
       sessions.push({
         day: 3,
         type: 'medio',
         label: 'Fondo lento',
         km: 8,
-        note: 'Gambe fresche per domenica.' + doppio
+        note: noteZ2puro()
       });
       sessions.push({
         day: 5,
         type: 'lunga',
         label: 'Allungo leggero',
         km: 10,
-        note: 'Corto e lento. Poi riposo domenica.'
+        note: `${FC_LABELS.Z2} — corto e lento. Dom riposo.`
       });
       return sessions;
     }
+    const longKmPlan = [0, 22, 25, 27, 18, 28, 30, 32, 20, 33, 35, 34, 22, 18, 14, 10, 0];
+    const longKm = longKmPlan[ph.weekInBlock] ?? 20;
     const isQuality = !isRec4 && !isTaper && ph.weekInBlock % 2 !== 0;
     if (isTaper || isRec4) {
-      const marKm = isTaper ? 6 : 8;
-      const gioKm = isTaper ? 8 : 10;
+      const marKm = isTaper ? 6 : 8,
+        gioKm = isTaper ? 8 : 10;
       sessions.push({
         day: 1,
         type: 'qualita',
         label: 'Fondo lento',
         km: marKm,
-        note: isTaper ? 'Taper: tutto lento, gambe fresche.' : 'Scarico.' + doppio
+        note: noteZ2puro(' Scarico.')
       });
       sessions.push({
         day: 3,
         type: 'medio',
         label: 'Fondo lento',
         km: gioKm,
-        note: isTaper ? 'Taper: niente sforzo.' : 'Scarico.' + doppio
+        note: noteZ2puro(' Scarico.')
       });
       sessions.push({
         day: 5,
         type: 'lunga',
         label: isTaper ? 'Lunga taper' : 'Lunga scarico',
         km: longKm,
-        note: isTaper ? 'Corta e lenta.' : 'Tutto lento.'
+        note: `${FC_LABELS.Z2} — tutto lento, max 151 bpm.`
       });
     } else {
       const marKm = Math.min(12, Math.round(longKm * 0.30));
       const gioKm = Math.min(14, Math.round(longKm * 0.38));
+      const z4km = longKm >= 30 ? 10 : longKm >= 25 ? 6 : 0;
+      const z2km = longKm - z4km;
+      const nRip = ph.weekInBlock <= 6 ? 5 : ph.weekInBlock <= 10 ? 6 : 7;
       sessions.push({
         day: 1,
         type: 'qualita',
-        label: isQuality ? 'Ripetute (es. 6×1km a 4:10/km)' : 'Progressivo',
+        label: isQuality ? `Ripetute ${nRip}×1km` : 'Progressivo',
         km: marKm,
-        note: isQuality ? 'Riscaldamento 2km · 6×1km a 4:10/km (passo gara -6s) · recupero 90s · defaticamento 2km. Sub 3h si costruisce qui.' + doppio : 'Parti a 5:20/km, chiudi gli ultimi 3km a passo gara (4:16/km).' + doppio
+        note: isQuality ? `${FC_LABELS.Z5a} nelle ripetute, Z2 nel recupero. Schema: 2km riscaldamento Z2 → ${nRip}×1km a 170-175 bpm (~3:50-4:00/km) con 90s recupero camminando → 2km defaticamento Z2. Non partire forte nelle prime ripetute.${doppio}` : `${FC_LABELS.Z2} i primi 2/3, ${FC_LABELS.Z4} l'ultimo terzo. Parti a 5:20/km (≤145 bpm), chiudi gli ultimi 3km a 4:16/km (165-170 bpm).${doppio}`
       });
       sessions.push({
         day: 3,
         type: 'medio',
-        label: 'Fondo medio',
+        label: 'Z2 puro — fondo lento',
         km: gioKm,
-        note: 'Passo 4:50-5:05/km, sforzo controllato. Corto ma qualitativo.' + doppio
+        note: `${FC_LABELS.Z2} — MAX 151 bpm. Giovedì è recupero aerobico: se vai sopra 151 bpm stai in Z3 e sprechi la sessione.${doppio}`
       });
       sessions.push({
         day: 5,
         type: 'lunga',
-        label: longKm >= 30 ? 'Lunga picco maratona' : 'Lunga maratona',
+        label: z4km > 0 ? `Lunga con finale Z4 (${z2km}+${z4km}km)` : 'Lunga Z2',
         km: longKm,
-        note: longKm >= 30 ? 'Ultimi 10-12km a passo gara (4:16/km). Questo è il lavoro che fa sub 3h.' : longKm >= 25 ? 'Ultimi 5-6km a passo gara. Costruisci la resistenza al ritmo.' : 'Fondo lento, costruzione base.'
+        note: z4km > 0 ? noteLunga(z2km, z4km) : `${FC_LABELS.Z2} — max 151 bpm per tutta la durata.`
       });
     }
     return sessions;
   }
-
-  // ---- TRANSIZIONE ----
   if (ph.id === 'transizione') {
     const marKm = Math.min(12, Math.round(totalKm * 0.22));
     const gioKm = Math.min(14, Math.round(totalKm * 0.27));
@@ -283,68 +254,66 @@ function generateRunSessions(weekNum, totalKm) {
     sessions.push({
       day: 1,
       type: 'qualita',
-      label: isRec ? 'Fondo lento' : 'Fondo medio + salite',
+      label: 'Fondo medio + salite',
       km: marKm,
-      note: 'Inizia a cercare dislivello vero — colline intorno a Prato/Firenze vanno benissimo.' + doppio
+      note: `${FC_LABELS.Z3} — introduce dislivello. FC 151-160 bpm, accettato più alto sulle salite. Cerca colline intorno a Prato/Firenze.${doppio}`
     });
     sessions.push({
       day: 3,
       type: 'medio',
-      label: 'Fondo medio',
+      label: 'Z2 puro',
       km: gioKm,
-      note: 'Passo easy, mai sotto 5:30/km. Obiettivo: tempo in piedi, non velocità.' + doppio
+      note: noteZ2puro()
     });
     sessions.push({
       day: 5,
       type: 'lunga',
       label: 'Lunga transizione',
       km: longKm,
-      note: 'Prima lunga con logica ultra: porta lo zaino, prova alimentazione in corsa, terreno misto se possibile.'
+      note: `${FC_LABELS.Z2} — prima lunga con logica ultra. Porta zaino, prova alimentazione, terreno misto. Max 151 bpm.`
     });
     return sessions;
   }
-
-  // ---- SPECIFICO ----
   if (ph.id === 'specifico') {
     const useB2B = !isRec && ph.weekInBlock >= 4;
     const pctLong = isRec ? 0.55 : Math.min(0.68, 0.52 + 0.16 * t);
     const pctB2b = useB2B ? 0.12 + 0.05 * t : 0;
     const marKm = isRec ? 7 : Math.min(11, Math.round(totalKm * 0.13));
     const gioKm = isRec ? 9 : Math.min(13, Math.round(totalKm * 0.16));
-    const longSab = Math.round((totalKm - marKm - gioKm) * (pctLong / (pctLong + pctB2b || 1)));
+    const longSab = Math.round((totalKm - marKm - gioKm) * (pctLong / (pctLong + (pctB2b || 0.001))));
     const b2bDom = useB2B ? totalKm - marKm - gioKm - longSab : 0;
     sessions.push({
       day: 1,
       type: 'qualita',
-      label: isRec ? 'Fondo lento' : 'Salite / cambi ritmo su trail',
+      label: isRec ? 'Fondo lento' : 'Salite / cambi ritmo trail',
       km: marKm,
-      note: isRec ? 'Scarico, FC bassa.' : 'Porta scarpe trail, cerca dislivello vero. Simula i tratti tecnici del Passatore.' + doppio
+      note: isRec ? noteZ2puro(' Scarico.') : `${FC_LABELS.Z4} sulle salite (fino a 170 bpm), ${FC_LABELS.Z2} in piano. Porta scarpe trail. Simula i tratti del Passatore.${doppio}`
     });
     sessions.push({
       day: 3,
       type: 'medio',
-      label: 'Fondo medio + zaino',
+      label: 'Z2 + zaino',
       km: gioKm,
-      note: 'Porta lo zaino e le scarpe gara. Prova alimentazione e idratazione come in gara.' + doppio
+      note: `${FC_LABELS.Z2} — MAX 151 bpm. Porta zaino e scarpe gara. Prova alimentazione come in gara.${doppio}`
     });
     sessions.push({
       day: 5,
       type: 'lunga',
-      label: 'Lunga specifica ultra',
+      label: 'Lunga ultra',
       km: longSab,
-      note: useB2B && longSab >= 40 ? 'Vera lunga da ultra. Gestisci cibo, idratazione, ritmo come in gara. Se possibile, parti al tramonto per abituarti al buio.' : 'Lunga progressiva, costruzione resistenza.'
+      note: useB2B && longSab >= 40 ? `${FC_LABELS.Z2} per tutto — mai sopra 155 bpm, cammina sulle salite se necessario. Qui contano le ore in piedi, non il passo.` : `${FC_LABELS.Z2} — max 151 bpm per tutta la durata.`
     });
     if (b2bDom > 0) sessions.push({
       day: 6,
       type: 'lunga',
-      label: 'Back-to-back (gambe stanche)',
+      label: 'Back-to-back',
       km: b2bDom,
-      note: 'Corsa il giorno dopo la lunga, sulle gambe già affaticate. Simula le ore finali del Passatore.'
+      note: `${FC_LABELS.Z2} obbligatorio — gambe stanche da ieri. Non spingere, accumula ore. Simula le ore finali del Passatore.`
     });
     return sessions;
   }
 
-  // ---- TAPER (3 settimane) ----
+  // taper
   const longKmTaper = [0, 32, 20, 10];
   const longKm = longKmTaper[ph.weekInBlock] ?? 10;
   const gioKm = Math.min(10, Math.round(longKm * 0.28));
@@ -354,21 +323,21 @@ function generateRunSessions(weekNum, totalKm) {
     type: 'qualita',
     label: 'Fondo lento',
     km: marKm,
-    note: 'Taper: tutto facile. Stai accumulando riposo, non fitness.' + doppio
+    note: noteZ2puro(' Taper.')
   });
   sessions.push({
     day: 3,
     type: 'medio',
     label: 'Medio scarico',
     km: gioKm,
-    note: 'Gambe sciolte, niente sforzo. Mantieni la frequenza, abbassa il carico.' + doppio
+    note: `${FC_LABELS.Z2} — gambe sciolte.${doppio}`
   });
   sessions.push({
     day: 5,
     type: 'lunga',
     label: ph.weekInBlock <= 2 ? 'Lunga taper' : 'Allungo leggero',
     km: longKm,
-    note: ph.weekInBlock <= 2 ? 'Passo facile per tutta la durata.' : 'Breve, lento, solo per mantenere le gambe attive.'
+    note: `${FC_LABELS.Z2} — passo facile per tutta la durata.`
   });
   return sessions.filter(s => s.km > 0);
 }
@@ -422,22 +391,15 @@ function generateWeekPlan(weekNum, level) {
     phaseGoal: ph.goal,
     isRecovery: isRec,
     totalKm: actualKm,
-    sessions,
-    startDate: isoDate(start)
+    sessions
   };
 }
-
-// ============================================================
-// MOTORE ADATTIVO
-// ============================================================
 function computeAdaptiveLevel(history, currentWeekNum) {
-  const lookback = 4;
-  const fromWeek = Math.max(1, currentWeekNum - lookback);
+  const fromWeek = Math.max(1, currentWeekNum - 4);
   let planned = 0,
     done = 0;
   for (let w = fromWeek; w < currentWeekNum; w++) {
-    const plan = generateWeekPlan(w, history.levelAtWeek?.[w] ?? history.currentLevel ?? 1);
-    plan.sessions.filter(s => !['muaythai', 'forza'].includes(s.type)).forEach(s => {
+    generateWeekPlan(w, history.levelAtWeek?.[w] ?? history.currentLevel ?? 1).sessions.filter(s => !['muaythai', 'forza'].includes(s.type)).forEach(s => {
       planned++;
       if (history.log[s.id] === 'done') done++;
     });
@@ -449,8 +411,8 @@ function computeAdaptiveLevel(history, currentWeekNum) {
     weeksConsidered: 0
   };
   const rate = done / planned;
-  let level = history.currentLevel ?? 1;
-  let status = 'ok';
+  let level = history.currentLevel ?? 1,
+    status = 'ok';
   if (rate >= 0.85) {
     level = Math.min(1, level + 0.05);
     status = 'ok';
@@ -467,10 +429,6 @@ function computeAdaptiveLevel(history, currentWeekNum) {
     weeksConsidered: currentWeekNum - fromWeek
   };
 }
-
-// ============================================================
-// STORAGE
-// ============================================================
 const STORAGE_KEY = 'passatore-history-v3';
 function loadHistory() {
   try {
@@ -480,8 +438,7 @@ function loadHistory() {
   return {
     log: {},
     currentLevel: 1,
-    levelAtWeek: {},
-    notes: {}
+    levelAtWeek: {}
   };
 }
 function saveHistory(h) {
@@ -489,35 +446,26 @@ function saveHistory(h) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(h));
   } catch (_) {}
 }
-
-// ============================================================
-// UI
-// ============================================================
 const TYPE_META = {
   lunga: {
     icon: '◐',
-    color: '#A8453A',
-    label: 'Lunga'
+    color: '#A8453A'
   },
   medio: {
     icon: '◑',
-    color: '#C97D4A',
-    label: 'Medio'
+    color: '#C97D4A'
   },
   qualita: {
     icon: '◆',
-    color: '#7A4A8B',
-    label: 'Qualità'
+    color: '#7A4A8B'
   },
   muaythai: {
     icon: '✦',
-    color: '#3D5A6C',
-    label: 'Muay Thai'
+    color: '#3D5A6C'
   },
   forza: {
     icon: '▲',
-    color: '#5A6C3D',
-    label: 'Forza'
+    color: '#5A6C3D'
   }
 };
 function App() {
@@ -564,52 +512,49 @@ function App() {
       return next;
     });
   }, [adaptive.level, activeWeek]);
-  if (loading || !history || !weekPlan) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: S.loadingScreen
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.loadingText
-    }, "Carico il piano…"));
-  }
+  if (loading || !history || !weekPlan) return /*#__PURE__*/React.createElement("div", {
+    style: S.loadingScreen
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.loadingText
+  }, "Carico il piano…"));
   const daysToMarathon = Math.max(0, Math.ceil((MARATHON_DATE - new Date()) / 86400000));
   const daysToRace = Math.max(0, Math.ceil((RACE_DATE - new Date()) / 86400000));
-  const showMarathon = daysToMarathon > 0;
   return /*#__PURE__*/React.createElement("div", {
     style: S.app
   }, /*#__PURE__*/React.createElement(Header, {
-    daysToMarathon: showMarathon ? daysToMarathon : null,
-    daysToRace: daysToRace
+    dm: daysToMarathon > 0 ? daysToMarathon : null,
+    dr: daysToRace
   }), /*#__PURE__*/React.createElement(StatusBanner, {
     adaptive: adaptive
   }), tab === 'week' && /*#__PURE__*/React.createElement(WeekView, {
     weekPlan: weekPlan,
     history: history,
     onToggle: toggleSession,
-    onPrevWeek: () => setViewWeek(Math.max(1, activeWeek - 1)),
-    onNextWeek: () => setViewWeek(Math.min(TOTAL_WEEKS, activeWeek + 1)),
+    onPrev: () => setViewWeek(Math.max(1, activeWeek - 1)),
+    onNext: () => setViewWeek(Math.min(TOTAL_WEEKS, activeWeek + 1)),
     onToday: () => setViewWeek(null),
-    isCurrentWeek: activeWeek === currentWeekNum
-  }), tab === 'progress' && /*#__PURE__*/React.createElement(ProgressView, {
+    isCurrent: activeWeek === currentWeekNum
+  }), tab === 'zones' && /*#__PURE__*/React.createElement(ZonesView, null), tab === 'progress' && /*#__PURE__*/React.createElement(ProgressView, {
     history: history,
-    currentWeekNum: currentWeekNum
+    cwn: currentWeekNum
   }), tab === 'info' && /*#__PURE__*/React.createElement(InfoView, null), /*#__PURE__*/React.createElement(TabBar, {
     tab: tab,
     setTab: setTab
   }));
 }
 function Header({
-  daysToMarathon,
-  daysToRace
+  dm,
+  dr
 }) {
   return /*#__PURE__*/React.createElement("div", {
     style: S.header
   }, /*#__PURE__*/React.createElement("div", {
     style: S.headerLabel
-  }, "PIANO DOPPIO OBIETTIVO"), daysToMarathon !== null && /*#__PURE__*/React.createElement("div", {
+  }, "PIANO DOPPIO OBIETTIVO · LTHR 170 bpm"), dm && /*#__PURE__*/React.createElement("div", {
     style: S.headerRow
   }, /*#__PURE__*/React.createElement("div", {
-    style: S.headerCountdownSmall
-  }, daysToMarathon, /*#__PURE__*/React.createElement("span", {
+    style: S.headerSmall
+  }, dm, /*#__PURE__*/React.createElement("span", {
     style: S.headerUnit
   }, " giorni")), /*#__PURE__*/React.createElement("div", {
     style: S.headerSub
@@ -617,10 +562,10 @@ function Header({
     style: S.headerRow
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      ...S.headerCountdown,
-      color: daysToMarathon ? '#C97D4A' : '#F5F2EC'
+      ...S.headerBig,
+      color: dm ? '#C97D4A' : '#F5F2EC'
     }
-  }, daysToRace, /*#__PURE__*/React.createElement("span", {
+  }, dr, /*#__PURE__*/React.createElement("span", {
     style: S.headerUnit
   }, " giorni")), /*#__PURE__*/React.createElement("div", {
     style: S.headerSub
@@ -629,33 +574,31 @@ function Header({
 function StatusBanner({
   adaptive
 }) {
-  if (adaptive.weeksConsidered === 0) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        ...S.banner,
-        borderColor: '#7A8B7F'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: S.bannerTitle
-    }, "Piano avviato"), /*#__PURE__*/React.createElement("div", {
-      style: S.bannerText
-    }, "Il motore adattivo si attiva dopo le prime sessioni registrate."));
-  }
+  if (adaptive.weeksConsidered === 0) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.banner,
+      borderColor: '#7A8B7F'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.bannerTitle
+  }, "Piano avviato"), /*#__PURE__*/React.createElement("div", {
+    style: S.bannerText
+  }, "Il motore adattivo si attiva dopo le prime sessioni registrate."));
   const cfg = {
     ok: {
       color: '#7A8B7F',
-      title: 'In linea col piano',
-      text: `${Math.round(adaptive.rate * 100)}% di adesione nelle ultime ${adaptive.weeksConsidered} settimane. Progressione normale.`
+      title: 'In linea',
+      text: `${Math.round(adaptive.rate * 100)}% di adesione · progressione normale.`
     },
     frozen: {
       color: '#C97D4A',
       title: 'Progressione congelata',
-      text: `${Math.round(adaptive.rate * 100)}% di adesione. Volume fermo finché non recuperi costanza.`
+      text: `${Math.round(adaptive.rate * 100)}% · volume fermo finché non recuperi costanza.`
     },
     reduced: {
       color: '#A8453A',
-      title: 'Volume ridotto automaticamente',
-      text: `Solo ${Math.round(adaptive.rate * 100)}% di adesione. Il piano ha tagliato il carico per evitare infortuni.`
+      title: 'Volume ridotto',
+      text: `Solo ${Math.round(adaptive.rate * 100)}% di adesione · carico tagliato automaticamente.`
     }
   }[adaptive.status];
   return /*#__PURE__*/React.createElement("div", {
@@ -676,10 +619,10 @@ function WeekView({
   weekPlan,
   history,
   onToggle,
-  onPrevWeek,
-  onNextWeek,
+  onPrev,
+  onNext,
   onToday,
-  isCurrentWeek
+  isCurrent
 }) {
   const phase = PHASES.find(p => p.id === weekPlan.phase);
   return /*#__PURE__*/React.createElement("div", {
@@ -688,17 +631,17 @@ function WeekView({
     style: S.weekNav
   }, /*#__PURE__*/React.createElement("button", {
     style: S.navBtn,
-    onClick: onPrevWeek
+    onClick: onPrev
   }, "‹"), /*#__PURE__*/React.createElement("div", {
     style: S.weekNavCenter
   }, /*#__PURE__*/React.createElement("div", {
     style: S.weekNavTitle
-  }, "Settimana ", weekPlan.weekNum, " / ", TOTAL_WEEKS), !isCurrentWeek && /*#__PURE__*/React.createElement("button", {
+  }, "Settimana ", weekPlan.weekNum, " / ", TOTAL_WEEKS), !isCurrent && /*#__PURE__*/React.createElement("button", {
     style: S.todayBtn,
     onClick: onToday
   }, "torna a oggi")), /*#__PURE__*/React.createElement("button", {
     style: S.navBtn,
-    onClick: onNextWeek
+    onClick: onNext
   }, "›")), /*#__PURE__*/React.createElement("div", {
     style: S.blockCard
   }, /*#__PURE__*/React.createElement("div", {
@@ -708,11 +651,9 @@ function WeekView({
     }
   }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: S.blockLabel
-  }, weekPlan.phaseLabel, " · settimana ", weekPlan.weekInBlock, "/", weekPlan.blockTotalWeeks), /*#__PURE__*/React.createElement("div", {
+  }, weekPlan.phaseLabel, " · sett ", weekPlan.weekInBlock, "/", weekPlan.blockTotalWeeks), /*#__PURE__*/React.createElement("div", {
     style: S.blockSub
-  }, weekPlan.phaseGoal, " · ", weekPlan.totalKm, " km pianificati", weekPlan.isRecovery && /*#__PURE__*/React.createElement("span", {
-    style: S.recoveryTag
-  }, " · scarico")))), /*#__PURE__*/React.createElement("div", {
+  }, weekPlan.phaseGoal, " · ", weekPlan.totalKm, " km", weekPlan.isRecovery ? ' · scarico' : ''))), /*#__PURE__*/React.createElement("div", {
     style: S.sessionList
   }, weekPlan.sessions.map(s => /*#__PURE__*/React.createElement(SessionRow, {
     key: s.id,
@@ -764,44 +705,133 @@ function SessionRow({
     style: S.sessionNote
   }, session.note)));
 }
+function ZonesView() {
+  const zones = [{
+    id: 'Z1',
+    label: 'Z1 — Recupero',
+    range: '< 138 bpm',
+    color: '#7A8B7F',
+    uso: 'Cammino o jogging lentissimo dopo sessioni dure.'
+  }, {
+    id: 'Z2',
+    label: 'Z2 — Aerobico base',
+    range: '138–151 bpm',
+    color: '#5A7A5A',
+    uso: '80% del tuo volume. Fondo lento e lunghe. Sembra troppo lento: è giusto. Costruisce il motore per la sub-3h e per il Passatore. Passo atteso: ~4:50-5:30/km.'
+  }, {
+    id: 'Z3',
+    label: 'Z3 — Zona grigia',
+    range: '151–160 bpm',
+    color: '#C97D4A',
+    uso: 'Evita nei fondi. Né abbastanza lento da recuperare, né abbastanza veloce da stimolare. È la zona dove si allena la maggior parte degli amatori senza capire perché non migliorano.'
+  }, {
+    id: 'Z4',
+    label: 'Z4 — Soglia',
+    range: '160–170 bpm',
+    color: '#A87A3A',
+    uso: 'Passo maratona (4:14-4:16/km). Finali di lunga e progressivi. La tua soglia Garmin è a 4:00/km — la maratona si corre leggermente sotto soglia.'
+  }, {
+    id: 'Z5a',
+    label: 'Z5a — VO2max',
+    range: '170–175 bpm',
+    color: '#A8453A',
+    uso: 'Ripetute 1km a ~3:50-4:00/km. Il lavoro che alza il tuo potenziale massimo. Scomodo ma gestibile.'
+  }, {
+    id: 'Z5b',
+    label: 'Z5b — Anaerobico',
+    range: '175–180 bpm',
+    color: '#8A2030',
+    uso: 'Ripetute 200-400m. Raramente nel tuo piano — non è la priorità per maratona e ultra.'
+  }];
+  return /*#__PURE__*/React.createElement("div", {
+    style: S.content
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Le tue zone FC"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, "LTHR = 170 bpm · Soglia a 4:00/km (dato Garmin) · Metodo Friel/Coggan"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoText,
+      fontStyle: 'italic',
+      marginTop: 4
+    }
+  }, "[Non verificato] La stima Garmin è affidabile entro ~3-5 bpm su atleti con dati sufficienti. Dopo qualche settimana di allenamento strutturato, rivaluta se i passi corrispondono alle sensazioni.")), zones.map(z => /*#__PURE__*/React.createElement("div", {
+    key: z.id,
+    style: {
+      ...S.infoBlock,
+      borderLeft: `4px solid ${z.color}`,
+      paddingLeft: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      marginBottom: 6,
+      alignItems: 'baseline'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 700
+    }
+  }, z.label), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: z.color
+    }
+  }, z.range)), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, z.uso))), /*#__PURE__*/React.createElement("div", {
+    style: S.infoBlock
+  }, /*#__PURE__*/React.createElement("div", {
+    style: S.infoTitle
+  }, "Schema 80/20 nelle tue 3 sessioni"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "Martedì:"), " Z5a (ripetute, settimane dispari) o Z4 (progressivo, settimane pari). Intenso, breve."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "Giovedì:"), " Z2 puro. Max 151 bpm. Se superi: rallenta."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "Sabato:"), " Z2 per il 70-80% della lunga, finale Z4 nelle settimane di costruzione (dalla S5 in poi).")));
+}
 function ProgressView({
   history,
-  currentWeekNum
+  cwn
 }) {
   const totalDone = Object.values(history.log).filter(v => v === 'done').length;
   const totalSkipped = Object.values(history.log).filter(v => v === 'skipped').length;
   const adherence = totalDone + totalSkipped > 0 ? Math.round(totalDone / (totalDone + totalSkipped) * 100) : 0;
   const weeksData = useMemo(() => {
     const arr = [];
-    for (let w = Math.max(1, currentWeekNum - 7); w <= currentWeekNum; w++) {
-      const lvl = history.levelAtWeek?.[w] ?? 1;
-      const plan = generateWeekPlan(w, lvl);
+    for (let w = Math.max(1, cwn - 7); w <= cwn; w++) {
+      const plan = generateWeekPlan(w, history.levelAtWeek?.[w] ?? 1);
       const runs = plan.sessions.filter(s => !['muaythai', 'forza'].includes(s.type));
-      const done = runs.filter(s => history.log[s.id] === 'done').length;
       arr.push({
         week: w,
         total: runs.length,
-        done,
-        phaseColor: plan.phaseColor
+        done: runs.filter(s => history.log[s.id] === 'done').length,
+        color: plan.phaseColor
       });
     }
     return arr;
-  }, [history, currentWeekNum]);
+  }, [history, cwn]);
   return /*#__PURE__*/React.createElement("div", {
     style: S.content
   }, /*#__PURE__*/React.createElement("div", {
     style: S.statsGrid
   }, /*#__PURE__*/React.createElement(StatCard, {
-    label: "Sessioni completate",
+    label: "Completate",
     value: totalDone
   }), /*#__PURE__*/React.createElement(StatCard, {
-    label: "Sessioni saltate",
+    label: "Saltate",
     value: totalSkipped
   }), /*#__PURE__*/React.createElement(StatCard, {
-    label: "Adesione totale",
+    label: "Adesione",
     value: `${adherence}%`
   }), /*#__PURE__*/React.createElement(StatCard, {
-    label: "Livello attuale",
+    label: "Livello",
     value: `${Math.round((history.currentLevel ?? 1) * 100)}%`
   })), /*#__PURE__*/React.createElement("div", {
     style: S.sectionTitle
@@ -829,8 +859,8 @@ function ProgressView({
   }, PHASES.map((ph, i) => {
     let startW = 1;
     for (let j = 0; j < i; j++) startW += PHASES[j].weeks;
-    const isCurrent = currentWeekNum >= startW && currentWeekNum < startW + ph.weeks;
-    const isPast = currentWeekNum >= startW + ph.weeks;
+    const isCurrent = cwn >= startW && cwn < startW + ph.weeks;
+    const isPast = cwn >= startW + ph.weeks;
     return /*#__PURE__*/React.createElement("div", {
       key: ph.id,
       style: S.phaseRow
@@ -873,35 +903,21 @@ function InfoView() {
     style: S.infoBlock
   }, /*#__PURE__*/React.createElement("div", {
     style: S.infoTitle
-  }, "Piano doppio obiettivo"), /*#__PURE__*/React.createElement("p", {
+  }, "Piano · 39 settimane"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, "Maratona di Firenze (20 dic 2026, target sub 3:00 = passo 4:16/km) come tappa verso il 100km del Passatore (22 mag 2027). La tua mezza a 4:05/km dà una previsione Riegel di ~2h58 — il motore aerobico c'è, serve costruire la resistenza al ritmo specifico.")), /*#__PURE__*/React.createElement("div", {
+  }, "Maratona Firenze 20 dic 2026 (sub 3:00 = 4:16/km) + 100km Passatore 22 mag 2027. LTHR = 170 bpm. Schema 80/20: 80% Z2, 20% Z4-Z5a.")), /*#__PURE__*/React.createElement("div", {
     style: S.infoBlock
   }, /*#__PURE__*/React.createElement("div", {
     style: S.infoTitle
-  }, "Struttura · 40 settimane"), /*#__PURE__*/React.createElement("p", {
+  }, "Sessioni settimanali"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Maratona (17 sett):"), " ripetute a 4:10/km per costruire il ritmo gara, lunga fino a 35km con ultimi 10-12km a passo gara, volume 45-60km/sett. Scarico ogni 4ª settimana, taper dalle settimane 14-17."), /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " qualità — ripetute Z5a (sett. dispari) o progressivo Z4 (sett. pari)."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Transizione (3 sett):"), " volume ridotto post-maratona ma attivo. Inizio obbligatorio del dislivello — colline intorno a Prato/Firenze."), /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " Z2 puro — max 151 bpm, nessuna eccezione."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Specifico Passatore (15 sett):"), " lunghe ultra fino a 46km + back-to-back, dislivello crescente."), /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Sab:"), " lunga — Z2 con finale Z4 nelle settimane di costruzione."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Taper (3 sett):"), " lunga scende 32→20→10km."), /*#__PURE__*/React.createElement("p", {
-    style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Gara (1 sett):"), " scioglimento giovedì, 🏁 Passatore sabato 22 maggio.")), /*#__PURE__*/React.createElement("div", {
-    style: S.infoBlock
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.infoTitle
-  }, "Schema giorni fisso"), /*#__PURE__*/React.createElement("p", {
-    style: S.infoText
-  }, "Muay Thai lun/mer/ven ore 21 e forza funzionale mar/gio pranzo restano invariati. Corsa: martedì e giovedì (doppio con forza — mattina presto o sera), sabato lunga, domenica back-to-back solo nel blocco Specifico.")), /*#__PURE__*/React.createElement("div", {
-    style: S.infoBlock
-  }, /*#__PURE__*/React.createElement("div", {
-    style: S.infoTitle
-  }, "Motore adattivo"), /*#__PURE__*/React.createElement("p", {
-    style: S.infoText
-  }, "[Inferenza] Volume auto-regolato ogni settimana in base all'adesione delle ultime 4 settimane di corsa: ≥85% → progressione normale; 60-85% → volume congelato; <60% → volume ridotto automaticamente.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " back-to-back Z2 (blocco Specifico, settimane piene).")));
 }
 function TabBar({
   tab,
@@ -911,6 +927,10 @@ function TabBar({
     id: 'week',
     label: 'Settimana',
     icon: '◐'
+  }, {
+    id: 'zones',
+    label: 'Zone FC',
+    icon: '♡'
   }, {
     id: 'progress',
     label: 'Progressi',
@@ -939,7 +959,7 @@ const S = {
   app: {
     minHeight: '100vh',
     background: '#F5F2EC',
-    fontFamily: "'Inter', -apple-system, sans-serif",
+    fontFamily: "'Inter',-apple-system,sans-serif",
     color: '#1A1A1A',
     paddingBottom: 76,
     maxWidth: 480,
@@ -950,8 +970,7 @@ const S = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: '#F5F2EC',
-    fontFamily: 'sans-serif'
+    background: '#F5F2EC'
   },
   loadingText: {
     color: '#9A9690',
@@ -963,7 +982,7 @@ const S = {
     padding: '24px 20px 20px'
   },
   headerLabel: {
-    fontSize: 11,
+    fontSize: 10,
     letterSpacing: '0.12em',
     color: '#C97D4A',
     fontWeight: 700,
@@ -972,22 +991,22 @@ const S = {
   headerRow: {
     marginBottom: 8
   },
-  headerCountdown: {
+  headerBig: {
     fontSize: 44,
     fontWeight: 800,
     lineHeight: 1,
-    fontFamily: "'Georgia', serif",
+    fontFamily: "'Georgia',serif",
     letterSpacing: '-0.02em'
   },
-  headerCountdownSmall: {
-    fontSize: 32,
+  headerSmall: {
+    fontSize: 30,
     fontWeight: 800,
     lineHeight: 1,
-    fontFamily: "'Georgia', serif",
+    fontFamily: "'Georgia',serif",
     color: '#5A7A9A'
   },
   headerUnit: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 500,
     color: '#C5C0B8',
     marginLeft: 4
@@ -1073,10 +1092,6 @@ const S = {
     color: '#7A766E',
     marginTop: 2
   },
-  recoveryTag: {
-    color: '#C97D4A',
-    fontWeight: 600
-  },
   sessionList: {
     display: 'flex',
     flexDirection: 'column',
@@ -1135,7 +1150,7 @@ const S = {
     fontSize: 12,
     color: '#5A564E',
     marginTop: 5,
-    lineHeight: 1.4
+    lineHeight: 1.5
   },
   missedTag: {
     color: '#A8453A',
@@ -1155,7 +1170,7 @@ const S = {
   statValue: {
     fontSize: 26,
     fontWeight: 800,
-    fontFamily: "'Georgia', serif"
+    fontFamily: "'Georgia',serif"
   },
   statLabel: {
     fontSize: 11.5,
@@ -1163,10 +1178,10 @@ const S = {
     marginTop: 3
   },
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 700,
     color: '#7A766E',
-    letterSpacing: '0.05em',
+    letterSpacing: '0.06em',
     textTransform: 'uppercase',
     marginBottom: 10
   },
@@ -1247,8 +1262,8 @@ const S = {
   infoText: {
     fontSize: 13,
     color: '#5A564E',
-    lineHeight: 1.55,
-    marginBottom: 8
+    lineHeight: 1.6,
+    marginBottom: 6
   },
   tabBar: {
     position: 'fixed',
@@ -1260,7 +1275,7 @@ const S = {
     background: '#FFFFFF',
     borderTop: '1px solid #E8E4DC',
     display: 'flex',
-    paddingBottom: 'env(safe-area-inset-bottom, 8px)'
+    paddingBottom: 'env(safe-area-inset-bottom,8px)'
   },
   tabBtn: {
     flex: 1,
