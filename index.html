@@ -102,6 +102,116 @@ function baseWeeklyKm(w, level) {
   return Math.round(km * level);
 }
 const MOB_NOTE = 'Contenuto da definire con fisio o preparatore — non seguire routine generiche finché la schiena non è stata valutata.';
+
+// ─── BLOCCO SPECIFICO MARATONA · settimane 11-17 (2 nov → 20 dic 2026) ───
+// Obiettivo: sub 3:00 = 4:16/km. Il limite rilevato non è cardiaco (Roma: FC media
+// 152 = 89% LTHR, passo in calo a FC piatta negli ultimi 12km) ma di specificità
+// al passo gara e di rifornimento. Da qui in poi: medi interi a passo gara.
+
+const PG = '4:16/km';
+const GEL = 'RIFORNIMENTO: 1 SiS Beta Fuel (40g) ogni 30 minuti a partire dal minuto 30, con due sorsi d\'acqua. Sali tra un gel e l\'altro, mai insieme. Stesso prodotto che userai in gara.';
+function medio(km, passo, fcMin, fcMax, doppio, extra = '') {
+  return {
+    day: 1,
+    type: 'medio',
+    label: `Medio ${km} km a ${passo}`,
+    km,
+    note: `2 km di riscaldamento Z2, poi ${km - 3} km interi a ${passo} senza interruzioni, 1 km defaticamento. FC attesa ${fcMin}-${fcMax} bpm. Se sfori ${fcMax} rallenta: il dato che conta è la FC, non il cronometro.${extra} Da fresco — non è un finale di lunga.${doppio}`
+  };
+}
+function z2gio(km, doppio) {
+  return {
+    day: 3,
+    type: 'medio',
+    label: `Z2 puro — ${km} km`,
+    km,
+    note: `🟢 Z2 — MAX 151 bpm. Giovedì è recupero aerobico: sopra 151 bpm sei in Z3 e bruci il medio di martedì.${doppio}`
+  };
+}
+function rigen(km) {
+  return {
+    day: 6,
+    type: 'rigenerativa',
+    label: `Rigenerativa ${km} km`,
+    km,
+    note: '🔵 Z1-Z2 basso — MAX 140 bpm, passo ~5:40-6:00/km. Serve a recuperare dalla lunga, non ad aggiungere chilometri.'
+  };
+}
+function lunga(km, z2km, pgKm, passo, fcMax, label) {
+  return {
+    day: 5,
+    type: 'lunga',
+    label: label ?? `Lunga ${km} km (${z2km} Z2 + ${pgKm} a ${passo})`,
+    km,
+    note: `Primi ${z2km} km: 🟢 Z2, MAX 151 bpm. Ultimi ${pgKm} km a ${passo}, FC max ${fcMax} bpm. Se al km ${z2km} sei già sopra 155 bpm hai corso troppo forte la prima parte. ${GEL}`
+  };
+}
+function bloccoSpecifico(w, doppio) {
+  switch (w) {
+    case 11:
+      return [{
+        day: 1,
+        type: 'medio',
+        label: 'Z2 13 km — già svolto 3 nov',
+        km: 13,
+        note: '🟢 Z2 — seduta già eseguita martedì mattina a 5:08/km con FC 130. Registrala e basta: il medio di questa settimana è spostato a giovedì.'
+      }, {
+        ...medio(12, '4:25', 155, 160, doppio, ' Primo medio del blocco: parti a 4:25, non a 4:16.'),
+        day: 3,
+        type: 'qualita'
+      }, lunga(28, 16, 12, '4:25', 162), rigen(6)];
+    case 12:
+      return [medio(15, '4:20', 156, 161, doppio), z2gio(10, doppio), lunga(32, 17, 15, '4:20', 163), rigen(7)];
+    case 13:
+      return [{
+        day: 1,
+        type: 'qualita',
+        label: 'Soglia 5×2000 m',
+        km: 14,
+        note: `2 km riscaldamento Z2 → 5×2000 m a 4:00/km (🔴 Z4 alto, 165-170 bpm) con 3 min di recupero corso lento → 2 km defaticamento. Alza il tetto di soglia: dopo questa seduta ${PG} costa meno battiti.${doppio}`
+      }, z2gio(10, doppio), {
+        day: 5,
+        type: 'lunga',
+        label: '⚑ TEST — 30 km (12 Z2 + 18 a 4:16)',
+        km: 30,
+        note: `SEDUTA DECISIVA — sabato 21 novembre. Primi 12 km Z2 sotto 151 bpm, poi 18 km interi a ${PG} senza mollare. A fine seduta leggi la FC MEDIA del secondo blocco: ≤158 → parti a 4:15, sub-3 in gioco. 159-163 → parti a 4:20 e decidi al 30°. >163 → parti a 4:25, il sub-3 slitta a primavera. ${GEL}`
+      }, rigen(6)];
+    case 14:
+      return [medio(18, '4:16', 158, 163, doppio, ' Passo gara pieno.'), z2gio(10, doppio), lunga(34, 14, 20, '4:20', 163, 'Lunga picco 34 km (14 Z2 + 20 a 4:20)'), rigen(7)];
+    case 15:
+      return [medio(16, '4:16', 158, 163, doppio, ' Ultimo medio lungo: da qui il volume scende.'), z2gio(9, doppio), lunga(26, 10, 16, '4:16', 163), rigen(6)];
+    case 16:
+      return [medio(10, '4:16', 158, 163, doppio, ' Taper: breve ma a passo pieno, per tenere il gesto.'), z2gio(8, doppio), lunga(18, 10, 8, '4:20', 162, 'Lunga taper 18 km (10 Z2 + 8 a 4:20)'), rigen(5)];
+    case 17:
+      return [{
+        day: 1,
+        type: 'qualita',
+        label: 'Rifinitura 8 km con 3×1 km',
+        km: 8,
+        note: `2 km Z2 → 3×1 km a ${PG} con 2 min di recupero → 2 km Z2. Serve a ricordare il passo alle gambe, non ad allenare. Finisci con la sensazione di poterne fare altri dieci.${doppio}`
+      }, {
+        day: 3,
+        type: 'medio',
+        label: 'Sciolto 6 km',
+        km: 6,
+        note: '🟢 Z2 facilissimo, max 145 bpm. Da qui in poi niente di duro.'
+      }, {
+        day: 5,
+        type: 'medio',
+        label: 'Sgambata 4 km',
+        km: 4,
+        note: '20 minuti lentissimi con 4 allunghi di 15 secondi. Sabato 19 dicembre. Poi gambe alzate.'
+      }, {
+        day: 6,
+        type: 'lunga',
+        label: '🏁 MARATONA DI FIRENZE',
+        km: 42,
+        note: `Domenica 20 dicembre. Passo deciso dal test del 21 novembre. GARA: 1 Beta Fuel 45 min prima, poi 1 ogni 7 km (km 7-14-21-28-35) = 200 g di carboidrati, ~67 g/ora. A Roma erano ~40 g/ora e dal 35° hai perso 15 secondi al km con la FC ferma: era carburante, non cuore.`
+      }];
+    default:
+      return [];
+  }
+}
 function generateRunSessions(w, totalKm) {
   const ph = getPhaseForWeek(w);
   const t = (ph.weekInBlock - 1) / Math.max(ph.weeks - 1, 1);
@@ -128,6 +238,7 @@ function generateRunSessions(w, totalKm) {
     return s;
   }
   if (ph.id === 'maratona') {
+    if (ph.weekInBlock >= 11) return bloccoSpecifico(ph.weekInBlock, doppio);
     const isTaper = ph.weekInBlock >= 14;
     const isRec4 = ph.weekInBlock % 4 === 0;
     if (ph.weekInBlock === 17) {
@@ -372,16 +483,18 @@ function generateWeekPlan(w, level) {
   const totalKm = baseWeeklyKm(w, level);
   const runs = generateRunSessions(w, totalKm);
   const start = weekStartDate(w);
-  const isRec = ph.weekInBlock % 4 === 0 && !['taper', 'gara'].includes(ph.id);
+  const inSpecifico = ph.id === 'maratona' && ph.weekInBlock >= 11;
+  const isRec = inSpecifico ? ph.weekInBlock === 16 : ph.weekInBlock % 4 === 0 && !['taper', 'gara'].includes(ph.id);
   const skipMT = w === 1 || ph.id === 'gara';
   const mtRidotto = ph.id === 'maratona' && ph.weekInBlock >= 14;
+  const mtSoloLun = ph.id === 'maratona' && ph.weekInBlock === 17;
   const sessions = [];
   if (!skipMT) {
-    (mtRidotto ? [0, 2] : [0, 2, 4]).forEach(d => sessions.push({
+    (mtSoloLun ? [0] : mtRidotto ? [0, 2] : [0, 2, 4]).forEach(d => sessions.push({
       day: d,
       type: 'muaythai',
       label: 'Muay Thai',
-      note: mtRidotto ? 'Ore 21:00 · taper pre-maratona (venerdì saltato)' : 'Ore 21:00',
+      note: mtSoloLun ? 'Ore 21:00 · ultima seduta prima della gara. Niente sparring, niente contatto duro.' : mtRidotto ? 'Ore 21:00 · taper pre-maratona (venerdì saltato)' : 'Ore 21:00',
       fixed: true
     }));
     [1, 3].forEach(d => sessions.push({
@@ -579,7 +692,7 @@ function App() {
     style: S.loadingScreen
   }, /*#__PURE__*/React.createElement("div", {
     style: S.loadingText
-  }, "Carico il piano…"));
+  }, "Carico il piano\u2026"));
   const dm = Math.max(0, Math.ceil((MARATHON_DATE - new Date()) / 86400000));
   const dr = Math.max(0, Math.ceil((RACE_DATE - new Date()) / 86400000));
   return /*#__PURE__*/React.createElement("div", {
@@ -588,7 +701,8 @@ function App() {
     dm: dm > 0 ? dm : null,
     dr: dr
   }), /*#__PURE__*/React.createElement(StatusBanner, {
-    adaptive: adaptive
+    adaptive: adaptive,
+    weekPlan: weekPlan
   }), tab === 'week' && /*#__PURE__*/React.createElement(WeekView, {
     weekPlan: weekPlan,
     history: history,
@@ -613,7 +727,7 @@ function Header({
     style: S.header
   }, /*#__PURE__*/React.createElement("div", {
     style: S.headerLabel
-  }, "PIANO DOPPIO OBIETTIVO · LTHR 170 bpm"), dm && /*#__PURE__*/React.createElement("div", {
+  }, "PIANO DOPPIO OBIETTIVO \xB7 LTHR 170 bpm"), dm && /*#__PURE__*/React.createElement("div", {
     style: S.headerRow
   }, /*#__PURE__*/React.createElement("div", {
     style: S.headerSmall
@@ -621,7 +735,7 @@ function Header({
     style: S.headerUnit
   }, " giorni")), /*#__PURE__*/React.createElement("div", {
     style: S.headerSub
-  }, "Maratona Firenze · Sub 3:00 · 20 dic 2026")), /*#__PURE__*/React.createElement("div", {
+  }, "Maratona Firenze \xB7 Sub 3:00 \xB7 20 dic 2026")), /*#__PURE__*/React.createElement("div", {
     style: S.headerRow
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -632,11 +746,25 @@ function Header({
     style: S.headerUnit
   }, " giorni")), /*#__PURE__*/React.createElement("div", {
     style: S.headerSub
-  }, "100km del Passatore · 22 mag 2027")));
+  }, "100km del Passatore \xB7 22 mag 2027")));
 }
 function StatusBanner({
-  adaptive
+  adaptive,
+  weekPlan
 }) {
+  if (weekPlan && weekPlan.phase === 'maratona' && weekPlan.weekInBlock >= 11) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.banner,
+      borderColor: '#A8453A'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.bannerTitle,
+      color: '#A8453A'
+    }
+  }, "Blocco specifico \xB7 volume fisso"), /*#__PURE__*/React.createElement("div", {
+    style: S.bannerText
+  }, "Da qui alla maratona i carichi non vengono pi\xF9 riadattati automaticamente: le sette settimane sono progettate come un blocco unico. Se salti una seduta non recuperarla \u2014 prosegui dalla successiva."));
   if (adaptive.weeksConsidered === 0) return /*#__PURE__*/React.createElement("div", {
     style: {
       ...S.banner,
@@ -695,7 +823,7 @@ function WeekView({
   }, /*#__PURE__*/React.createElement("button", {
     style: S.navBtn,
     onClick: onPrev
-  }, "‹"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2039"), /*#__PURE__*/React.createElement("div", {
     style: S.weekNavCenter
   }, /*#__PURE__*/React.createElement("div", {
     style: S.weekNavTitle
@@ -705,7 +833,7 @@ function WeekView({
   }, "torna a oggi")), /*#__PURE__*/React.createElement("button", {
     style: S.navBtn,
     onClick: onNext
-  }, "›")), /*#__PURE__*/React.createElement("div", {
+  }, "\u203A")), /*#__PURE__*/React.createElement("div", {
     style: S.blockCard
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -714,9 +842,9 @@ function WeekView({
     }
   }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: S.blockLabel
-  }, weekPlan.phaseLabel, " · sett ", weekPlan.weekInBlock, "/", weekPlan.blockTotalWeeks), /*#__PURE__*/React.createElement("div", {
+  }, weekPlan.phaseLabel, " \xB7 sett ", weekPlan.weekInBlock, "/", weekPlan.blockTotalWeeks), /*#__PURE__*/React.createElement("div", {
     style: S.blockSub
-  }, weekPlan.phaseGoal, " · ", weekPlan.totalKm, " km", weekPlan.isRecovery ? ' · scarico' : ''))), /*#__PURE__*/React.createElement("div", {
+  }, weekPlan.phaseGoal, " \xB7 ", weekPlan.totalKm, " km", weekPlan.isRecovery ? ' · scarico' : ''))), /*#__PURE__*/React.createElement("div", {
     style: S.sessionList
   }, weekPlan.sessions.map(x => /*#__PURE__*/React.createElement(SessionRow, {
     key: x.id,
@@ -764,7 +892,7 @@ function SessionRow({
     style: S.sessionMeta
   }, fmtDate(d), isPast && !status && !session.fixed ? /*#__PURE__*/React.createElement("span", {
     style: S.missedTag
-  }, " · da registrare") : null), session.note && /*#__PURE__*/React.createElement("div", {
+  }, " \xB7 da registrare") : null), session.note && /*#__PURE__*/React.createElement("div", {
     style: S.sessionNote
   }, session.note)));
 }
@@ -814,13 +942,13 @@ function ZonesView() {
     style: S.infoTitle
   }, "Le tue zone FC"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, "LTHR = 170 bpm · Soglia a 4:00/km (dato Garmin) · Metodo Friel/Coggan"), /*#__PURE__*/React.createElement("div", {
+  }, "LTHR = 170 bpm \xB7 Soglia a 4:00/km (dato Garmin) \xB7 Metodo Friel/Coggan"), /*#__PURE__*/React.createElement("div", {
     style: {
       ...S.infoText,
       fontStyle: 'italic',
       marginTop: 4
     }
-  }, "[Non verificato] La stima Garmin è affidabile entro ~3-5 bpm su atleti con dati sufficienti.")), zones.map(z => /*#__PURE__*/React.createElement("div", {
+  }, "[Non verificato] La stima Garmin \xE8 affidabile entro ~3-5 bpm su atleti con dati sufficienti.")), zones.map(z => /*#__PURE__*/React.createElement("div", {
     key: z.id,
     style: {
       ...S.infoBlock,
@@ -848,18 +976,77 @@ function ZonesView() {
   }, z.range)), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
   }, z.uso))), /*#__PURE__*/React.createElement("div", {
-    style: S.infoBlock
+    style: {
+      ...S.infoBlock,
+      borderLeft: '4px solid #A8453A',
+      paddingLeft: 14
+    }
   }, /*#__PURE__*/React.createElement("div", {
-    style: S.infoTitle
-  }, "Schema 80/20"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoTitle,
+      color: '#A8453A'
+    }
+  }, "Blocco specifico \xB7 2 nov \u2192 20 dic"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " qualità a rotazione — ripetute Z5a / progressivo Z4 / fartlek Z4 / salite."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " medio intero a passo gara, da fresco. Non \xE8 un finale di lunga."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " Z2 puro. Max 151 bpm."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " Z2 puro, max 151 bpm."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Sab:"), " lunga — Z2 con finale Z4 nelle settimane di costruzione."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Sab:"), " lunga con blocco lungo a passo gara + gel ogni 30 min."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " rigenerativa max 140 bpm + allunghi.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " rigenerativa max 140 bpm."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoText,
+      marginTop: 10
+    }
+  }, "Progressione dei medi: 12 km a 4:25 \u2192 15 a 4:20 \u2192 ", /*#__PURE__*/React.createElement("strong", null, "test"), " \u2192 18 a 4:16 \u2192 16 a 4:16 \u2192 10 a 4:16 \u2192 gara.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoBlock,
+      borderLeft: '4px solid #C97D4A',
+      paddingLeft: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoTitle,
+      color: '#C97D4A'
+    }
+  }, "Test del 21 novembre"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, "30 km: 12 in Z2, poi ", /*#__PURE__*/React.createElement("strong", null, "18 km interi a 4:16"), ". Leggi la FC media del secondo blocco."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "\u2264 158 bpm"), " \u2192 parti a 4:15. Sub-3 in gioco."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "159-163 bpm"), " \u2192 parti a 4:20, decidi al 30\xB0."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "> 163 bpm"), " \u2192 parti a 4:25. Il sub-3 slitta a primavera."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoText,
+      fontStyle: 'italic',
+      marginTop: 8
+    }
+  }, "Riferimento: il 4 ottobre hai corso 10 km a 4:17 con FC media 166,5 dopo 20 km a 4:50.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoBlock,
+      borderLeft: '4px solid #5A7A9A',
+      paddingLeft: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoTitle,
+      color: '#5A7A9A'
+    }
+  }, "Rifornimento"), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "In gara:"), " 1 SiS Beta Fuel 45 min prima, poi ai km 7-14-21-28-35. Totale 200 g = ~67 g/ora."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, /*#__PURE__*/React.createElement("strong", null, "In allenamento:"), " 1 gel ogni 30 min in ogni lunga, da subito. L'intestino va allenato come le gambe."), /*#__PURE__*/React.createElement("div", {
+    style: S.infoText
+  }, "Acqua col gel, sali tra un gel e l'altro. Mai insieme."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...S.infoText,
+      fontStyle: 'italic'
+    }
+  }, "A Roma: 3 gel GO Isotonic (22 g l'uno) = ~40 g/ora. Dal 35\xB0 km il passo \xE8 calato di 15 s/km con la FC invariata.")));
 }
 function ProgressView({
   history,
@@ -945,7 +1132,7 @@ function ProgressView({
       }
     }, ph.label, isCur ? ' ← ora' : ''), /*#__PURE__*/React.createElement("div", {
       style: S.phaseSub
-    }, ph.goal, " · ", ph.weeks, " sett.")));
+    }, ph.goal, " \xB7 ", ph.weeks, " sett.")));
   })));
 }
 function StatCard({
@@ -974,15 +1161,15 @@ function InfoView() {
       ...S.infoTitle,
       color: '#A8453A'
     }
-  }, "Mobilità — leggi prima"), /*#__PURE__*/React.createElement("div", {
+  }, "Mobilit\xE0 \u2014 leggi prima"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, "Gli slot di mobilità sono contenitori di tempo, non una prescrizione. Il contenuto va definito da un fisioterapista o dal preparatore, soprattutto finché la schiena non è stata valutata."), /*#__PURE__*/React.createElement("div", {
+  }, "Gli slot di mobilit\xE0 sono contenitori di tempo, non una prescrizione. Il contenuto va definito da un fisioterapista o dal preparatore, soprattutto finch\xE9 la schiena non \xE8 stata valutata."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, "Una rigidità che persiste oltre 10-14 giorni dopo un sovraccarico non è una contrattura semplice. Esercizi generici presi senza valutazione possono peggiorarla.")), /*#__PURE__*/React.createElement("div", {
+  }, "Una rigidit\xE0 che persiste oltre 10-14 giorni dopo un sovraccarico non \xE8 una contrattura semplice. Esercizi generici presi senza valutazione possono peggiorarla.")), /*#__PURE__*/React.createElement("div", {
     style: S.infoBlock
   }, /*#__PURE__*/React.createElement("div", {
     style: S.infoTitle
-  }, "Piano · 39 settimane"), /*#__PURE__*/React.createElement("div", {
+  }, "Piano \xB7 39 settimane"), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
   }, "Maratona Firenze 20 dic 2026 (sub 3:00 = 4:16/km) + 100km Passatore 22 mag 2027. LTHR 170 bpm. Schema 80/20.")), /*#__PURE__*/React.createElement("div", {
     style: S.infoBlock
@@ -992,13 +1179,13 @@ function InfoView() {
     style: S.infoText
   }, /*#__PURE__*/React.createElement("strong", null, "Lun/Mer/Ven:"), " Muay Thai ore 21 (ridotto a lun+mer nelle ultime 4 settimane pre-maratona)."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " forza a pranzo + corsa qualità (mattina o sera)."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Mar:"), " forza a pranzo + corsa qualit\xE0 (mattina o sera)."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " forza a pranzo + corsa Z2 + ", /*#__PURE__*/React.createElement("strong", null, "mobilità breve la sera"), "."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "Gio:"), " forza a pranzo + corsa Z2 + ", /*#__PURE__*/React.createElement("strong", null, "mobilit\xE0 breve la sera"), "."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
   }, /*#__PURE__*/React.createElement("strong", null, "Sab:"), " lunga."), /*#__PURE__*/React.createElement("div", {
     style: S.infoText
-  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " rigenerativa + ", /*#__PURE__*/React.createElement("strong", null, "mobilità lunga"), " a corpo caldo.")));
+  }, /*#__PURE__*/React.createElement("strong", null, "Dom:"), " rigenerativa + ", /*#__PURE__*/React.createElement("strong", null, "mobilit\xE0 lunga"), " a corpo caldo.")));
 }
 function TabBar({
   tab,
